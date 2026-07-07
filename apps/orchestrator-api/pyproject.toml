@@ -1,0 +1,23 @@
+[project]
+name = "orchestrator-api"
+version = "0.1.0"
+description = "FastAPI Orchestrator service for Business Research Agent"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.110.0",
+    "uvicorn>=0.28.0",
+    "sqlalchemy[asyncio]>=2.0.0",
+    "asyncpg>=0.29.0",
+    "duckdb>=0.10.0",
+    "pandas>=2.2.0",
+    "pyarrow>=15.0.0",
+    "langgraph>=0.1.0",
+    "langgraph-checkpoint-postgres>=2.0.0",
+    "mcp>=0.1.0",
+    "fastmcp>=0.4.1",
+    "groq>=0.5.0",
+    "langchain>=0.1.0",
+    "langchain-groq>=0.1.0",
+    "langchain-core>=0.1.0"
+]

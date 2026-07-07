@@ -1,0 +1,54 @@
+version: '3.8'
+
+services:
+  postgres-db:
+    image: pgvector/pgvector:pg16
+    container_name: postgres-db
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: research_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+      - ./infrastructure/init-scripts:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U admin -d research_db" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  orchestrator-api:
+    build: ./apps/orchestrator-api
+    container_name: orchestrator-api
+    depends_on:
+      postgres-db:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql://admin:password@postgres-db:5432/research_db
+      - DUCKDB_DATA_DIR=/shared/workspaces
+    volumes:
+      - workspace-data:/shared/workspaces
+
+  mcp-analytics:
+    build: ./packages/mcp-analytics
+    container_name: mcp-analytics
+    environment:
+      - DUCKDB_DATA_DIR=/shared/workspaces
+    volumes:
+      - workspace-data:/shared/workspaces:ro # CRITICAL: Read-Only mount
+
+  frontend-ui:
+    build: ./apps/frontend-ui
+    container_name: frontend-ui
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://orchestrator-api:8000
+
+volumes:
+  pg-data:
+  workspace-data: # This is where the .parquet files live
