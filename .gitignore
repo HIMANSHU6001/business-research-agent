@@ -36,3 +36,6 @@ workspaces/
 # Operating System
 .DS_Store
 Thumbs.db
+
+# LangGraph
+.langgraph_api
