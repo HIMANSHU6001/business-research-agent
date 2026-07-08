@@ -1,14 +1,14 @@
 import os
 import asyncio
 from contextlib import asynccontextmanager
+from typing import Any, Dict, Optional
 from fastapi import FastAPI, Depends, BackgroundTasks, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
-
-from src.database import init_duckdb, close_duckdb, get_pg_session, get_duckdb_conn
-from src.context.workspace import ingest_to_db, update_catalog_summary
+from .database import init_duckdb, close_duckdb, get_pg_session, get_duckdb_conn
+from .context.workspace import ingest_to_db, update_catalog_summary
 
 # Keep raw postgresql:// connection string for LangGraph checkpointer
 RAW_DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://admin:password@postgres-db:5432/research_db")
@@ -43,8 +43,8 @@ class IngestRequest(BaseModel):
     research_id: str
     artifact_id: str
     source_mcp: str
-    raw_json: any
-    inputs: dict = None
+    raw_json: Any
+    inputs: Optional[Dict[str, Any]] = None
 
 @app.get("/health")
 async def health_check(db: AsyncSession = Depends(get_pg_session)):

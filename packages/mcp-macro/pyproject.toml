@@ -1,0 +1,32 @@
+﻿[project]
+name = "mcp-macro"
+version = "0.1.0"
+description = "Data360 MCP server — Macro Economic Intelligence capability for the Business Research Agent."
+requires-python = ">=3.11"
+dependencies = [
+  "fastmcp>=2.12.4",
+  "mcp>=1.18.0",
+  "fastapi>=0.115.0",
+  "uvicorn[standard]>=0.30.0",
+  "typer>=0.20.1",
+  "pydantic-settings>=2.0.0",
+  "python-dotenv>=1.0.0",
+  "opencensus-ext-azure>=1.1.13",
+  "azure-monitor-opentelemetry>=1.6.0",
+  "pandas>=2.2.0",
+  "cachetools>=5.0.0",
+  "scikit-learn>=1.4.0",
+  "opentelemetry-instrumentation-httpx>=0.50b0",
+  "opentelemetry-sdk>=1.28.0",
+  "opentelemetry-exporter-otlp>=1.28.0",
+]
+
+[build-system]
+requires = ["setuptools>=42"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+data360 = ["tool_contract_version.json", "databases.json", "ref_area_groups.json"]

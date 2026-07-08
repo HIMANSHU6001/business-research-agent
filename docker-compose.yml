@@ -41,6 +41,17 @@ services:
     volumes:
       - workspace-data:/shared/workspaces:ro # CRITICAL: Read-Only mount
 
+  mcp-macro:
+    build: ./packages/mcp-macro
+    container_name: mcp-macro
+    ports:
+      - "8022:8000"
+    environment:
+      - DATA360_API_BASE_URL=https://data360api.worldbank.org
+      - MCP_TRANSPORT=sse
+      - MCP_PORT=8000
+
+
   frontend-ui:
     build: ./apps/frontend-ui
     container_name: frontend-ui

@@ -4,8 +4,9 @@ import uuid
 import datetime
 import pandas as pd
 from sqlalchemy import text
-from groq import AsyncGroq
-from src.database import get_duckdb_conn, AsyncSessionLocal
+from langchain_groq import ChatGroq
+from langchain_core.prompts import ChatPromptTemplate
+from ..database import get_duckdb_conn, AsyncSessionLocal
 
 async def generate_semantic_summary(artifact_id: str, sample_data_json: str, source_mcp: str) -> str:
     """Calls the Groq LLM to generate a 2-3 sentence semantic summary of the data."""
@@ -14,25 +15,29 @@ async def generate_semantic_summary(artifact_id: str, sample_data_json: str, sou
         return f"Semantic data catalog for {artifact_id} collected from {source_mcp}."
 
     try:
-        client = AsyncGroq(api_key=api_key)
-        prompt = f"""You are a data cataloging assistant. Write a 2-3 sentence semantic summary of the following dataset utility.
+        llm = ChatGroq(
+            api_key=api_key,
+            model="llama-3.1-8b-instant",
+            temperature=0.2,
+            max_tokens=150,
+        )
+        system_prompt = "You are a helpful data cataloging assistant."
+        user_prompt = f"""Write a 2-3 sentence semantic summary of the following dataset utility.
 Dataset ID: {artifact_id}
 Source MCP: {source_mcp}
 Sample Data (JSON):
 {sample_data_json[:2000]}
 
 Focus on what this data represents, its granularity, and its potential utility for business research. Keep it concise, professional, and strictly under 3 sentences."""
-
-        chat_completion = await client.chat.completions.create(
-            messages=[
-                {"role": "system", "content": "You are a helpful data cataloging assistant."},
-                {"role": "user", "content": prompt}
-            ],
-            model="llama-3.1-8b-instant",  # Stable Groq model
-            max_tokens=150,
-            temperature=0.2,
-        )
-        return chat_completion.choices[0].message.content.strip()
+        
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", system_prompt),
+            ("user", user_prompt)
+        ])
+        
+        chain = prompt | llm
+        response = await chain.ainvoke({})
+        return str(response.content).strip()
     except Exception as e:
         print(f"Error calling LLM for summary: {e}")
         return f"Dataset {artifact_id} from {source_mcp}. Summary generation failed."
