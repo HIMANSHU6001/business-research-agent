@@ -22,24 +22,41 @@ services:
   orchestrator-api:
     build: ./apps/orchestrator-api
     container_name: orchestrator-api
+    env_file: ./apps/orchestrator-api/.env
     depends_on:
       postgres-db:
         condition: service_healthy
     ports:
       - "8000:8000"
     environment:
+      - PYTHONPATH=src
       - DATABASE_URL=postgresql://admin:password@postgres-db:5432/research_db
       - DUCKDB_DATA_DIR=/shared/workspaces
+      - FINANCIAL_MCP_URL=http://mcp-financial:8000/sse
+      - MACRO_MCP_URL=http://mcp-macro:8000/sse
+      - TRENDS_MCP_URL=http://mcp-trends:8000/sse
     volumes:
       - workspace-data:/shared/workspaces
 
   mcp-analytics:
     build: ./packages/mcp-analytics
     container_name: mcp-analytics
+    ports:
+      - "8021:8000"
     environment:
       - DUCKDB_DATA_DIR=/shared/workspaces
     volumes:
       - workspace-data:/shared/workspaces:ro # CRITICAL: Read-Only mount
+
+  mcp-financial:
+    build: ./packages/mcp-financial
+    container_name: mcp-financial
+    ports:
+      - "8023:8000"
+    environment:
+      - ALPHA_VANTAGE_API_KEY=${ALPHA_VANTAGE_API_KEY}
+      - MCP_TRANSPORT=sse
+      - MCP_PORT=8000
 
   mcp-macro:
     build: ./packages/mcp-macro
@@ -51,6 +68,15 @@ services:
       - MCP_TRANSPORT=sse
       - MCP_PORT=8000
 
+  mcp-trends:
+    build: ./packages/mcp-trends
+    container_name: mcp-trends
+    ports:
+      - "8024:8000"
+    environment:
+      - SERPAPI_KEY=${SERPAPI_KEY}
+      - MCP_TRANSPORT=sse
+      - MCP_PORT=8000
 
   frontend-ui:
     build: ./apps/frontend-ui
@@ -62,4 +88,4 @@ services:
 
 volumes:
   pg-data:
-  workspace-data: # This is where the .parquet files live
+  workspace-data:

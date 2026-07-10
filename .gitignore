@@ -18,6 +18,8 @@ env/
 .mypy_cache/
 .ruff_cache/
 .uv/
+*.egg-info/
+
 
 # Environment variables
 .env

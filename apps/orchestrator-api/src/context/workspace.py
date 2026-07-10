@@ -2,11 +2,12 @@ import os
 import json
 import uuid
 import datetime
+import asyncio
 import pandas as pd
 from sqlalchemy import text
 from langchain_groq import ChatGroq
 from langchain_core.prompts import ChatPromptTemplate
-from ..database import get_duckdb_conn, AsyncSessionLocal
+from database import get_duckdb_conn, AsyncSessionLocal
 
 async def generate_semantic_summary(artifact_id: str, sample_data_json: str, source_mcp: str) -> str:
     """Calls the Groq LLM to generate a 2-3 sentence semantic summary of the data."""
@@ -103,47 +104,46 @@ async def ingest_to_db(research_id: str, artifact_id: str, source_mcp: str, raw_
     # Ensure research_id is a UUID
     r_uuid = uuid.UUID(research_id)
     
-    # 1. Flatten the raw_json and convert to Pandas DataFrame
-    # If raw_json is a dict, wrap it in a list to load as a dataframe
-    if isinstance(raw_json, dict):
-        # In case it has a data/results list nested inside
-        data_to_load = None
-        for key in ["data", "results", "entries", "records"]:
-            if key in raw_json and isinstance(raw_json[key], list):
-                data_to_load = raw_json[key]
-                break
-        if data_to_load is None:
-            data_to_load = [raw_json]
-    else:
+    def _process_data():
+        # 1. Flatten the raw_json and convert to Pandas DataFrame
         data_to_load = raw_json
+        if isinstance(raw_json, dict):
+            for key in ["data", "results", "entries", "records"]:
+                if key in raw_json and isinstance(raw_json[key], list):
+                    data_to_load = raw_json[key]
+                    break
+            if data_to_load is None:
+                data_to_load = [raw_json]
+        
+        df = pd.json_normalize(data_to_load)
+        
+        db_dir = os.getenv("DUCKDB_DATA_DIR", "/shared/workspaces")
+        research_dir = os.path.join(db_dir, str(research_id))
+        os.makedirs(research_dir, exist_ok=True)
+        parquet_path = os.path.join(research_dir, f"{artifact_id}.parquet")
+        
+        # 2. Execute DuckDB write
+        conn = get_duckdb_conn()
+        conn.register("my_df", df)
+        posix_parquet_path = parquet_path.replace("\\", "/")
+        conn.execute(f"COPY my_df TO '{posix_parquet_path}' (FORMAT PARQUET)")
+        conn.unregister("my_df")
+        
+        # Calculate row count and time boundaries
+        row_count = len(df)
+        time_start, time_end = detect_time_boundaries(df)
+        
+        # Format Schema Registry payload
+        schema_cols = [{"name": col, "type": map_pandas_dtype_to_sql(df[col].dtype)} for col in df.columns]
+        schema_ref = f"schema_{artifact_id}"
+        
+        # Sample JSON for LLM summarization
+        sample_df = df.head(5)
+        sample_json = sample_df.to_json(orient="records")
+        
+        return row_count, time_start, time_end, schema_cols, schema_ref, sample_json
 
-    df = pd.json_normalize(data_to_load)
-    
-    # Define physical storage path
-    db_dir = os.getenv("DUCKDB_DATA_DIR", "/shared/workspaces")
-    research_dir = os.path.join(db_dir, str(research_id))
-    os.makedirs(research_dir, exist_ok=True)
-    parquet_path = os.path.join(research_dir, f"{artifact_id}.parquet")
-    
-    # 2. Execute DuckDB write
-    conn = get_duckdb_conn()
-    conn.register("my_df", df)
-    # Use standard POSIX-like forward slashes for DuckDB path
-    posix_parquet_path = parquet_path.replace("\\", "/")
-    conn.execute(f"COPY my_df TO '{posix_parquet_path}' (FORMAT PARQUET)")
-    conn.unregister("my_df")
-    
-    # Calculate row count and time boundaries
-    row_count = len(df)
-    time_start, time_end = detect_time_boundaries(df)
-    
-    # Format Schema Registry payload
-    schema_cols = [{"name": col, "type": map_pandas_dtype_to_sql(df[col].dtype)} for col in df.columns]
-    schema_ref = f"schema_{artifact_id}"
-    
-    # Sample JSON for LLM summarization
-    sample_df = df.head(5)
-    sample_json = sample_df.to_json(orient="records")
+    row_count, time_start, time_end, schema_cols, schema_ref, sample_json = await asyncio.to_thread(_process_data)
     
     async with AsyncSessionLocal() as session:
         try:

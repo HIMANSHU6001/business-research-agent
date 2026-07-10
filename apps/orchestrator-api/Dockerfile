@@ -8,15 +8,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy pyproject.toml
-COPY pyproject.toml .
+# Copy pyproject.toml and README.md
+COPY pyproject.toml README.md ./
 
-# Install dependencies using pip
-RUN pip install --no-cache-dir .
-
-# Copy code
+# Copy src directory (needed by setuptools packages.find)
 COPY src/ /app/src/
+
+# Install dependencies and project using pip
+RUN pip install --no-cache-dir .
 
 EXPOSE 8000
 
 CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000"]
+

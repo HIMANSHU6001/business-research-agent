@@ -11,6 +11,7 @@ def main(
         "streamable-http", "-t", "--transport", help="Transport to use."
     ),
     port: int = typer.Option(8021, "-p", "--port", help="Port to bind the server to."),
+    host: str = typer.Option("0.0.0.0", "-h", "--host", help="Host to bind the server to."),
 ):
     """Run the MCP server with configurable transport and port."""
     dotenv.load_dotenv()
@@ -24,7 +25,7 @@ def main(
         azure_connection_string=mcp_settings.azure_connection_string,
     )
 
-    mcp.run(transport=transport, port=port)
+    mcp.run(transport=transport, host=host, port=port)
 
 
 if __name__ == "__main__":

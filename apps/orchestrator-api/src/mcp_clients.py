@@ -1,7 +1,13 @@
+import os
 import httpx
 from mcp.client.sse import sse_client
 from mcp import ClientSession
 from langchain_core.tools import tool, StructuredTool
+
+FINANCIAL_MCP_URL = os.getenv("FINANCIAL_MCP_URL", "http://mcp-financial:8000/sse")
+MACRO_MCP_URL = os.getenv("MACRO_MCP_URL", "http://mcp-macro:8000/sse")
+TRENDS_MCP_URL = os.getenv("TRENDS_MCP_URL", "http://mcp-trends:8000/sse")
+ANALYTICS_MCP_URL = os.getenv("ANALYTICS_MCP_URL", "http://mcp-analytics:8000/sse")
 
 async def call_mcp_tool(server_url: str, tool_name: str, arguments: dict) -> str:
     """Connect to an SSE MCP server, execute a tool, and return the content."""
@@ -31,7 +37,7 @@ async def invoke_analytics_tool(tool_name: str, arguments: dict) -> str:
         tool_name (str): The name of the tool to execute.
         arguments (dict): The arguments/parameters to pass to the tool.
     """
-    return await call_mcp_tool("http://mcp-analytics:8000/sse", tool_name, arguments)
+    return await call_mcp_tool(ANALYTICS_MCP_URL, tool_name, arguments)
 
 @tool
 async def invoke_financial_tool(tool_name: str, arguments: dict) -> str:
@@ -42,7 +48,7 @@ async def invoke_financial_tool(tool_name: str, arguments: dict) -> str:
         tool_name (str): The name of the tool to execute.
         arguments (dict): The arguments/parameters to pass to the tool.
     """
-    return await call_mcp_tool("http://mcp-financial:8000/sse", tool_name, arguments)
+    return await call_mcp_tool(FINANCIAL_MCP_URL, tool_name, arguments)
 
 @tool
 async def invoke_macro_tool(tool_name: str, arguments: dict) -> str:
@@ -53,7 +59,8 @@ async def invoke_macro_tool(tool_name: str, arguments: dict) -> str:
         tool_name (str): The name of the tool to execute.
         arguments (dict): The arguments/parameters to pass to the tool.
     """
-    return await call_mcp_tool("http://mcp-macro:8000/sse", tool_name, arguments)
+    return await call_mcp_tool(MACRO_MCP_URL, tool_name, arguments)
+
 
 # Dynamic Tool Discovery and Wrapping
 async def discover_mcp_tools(server_url: str) -> list[StructuredTool]:

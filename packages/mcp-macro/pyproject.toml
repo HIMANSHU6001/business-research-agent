@@ -1,4 +1,4 @@
-﻿[project]
+[project]
 name = "mcp-macro"
 version = "0.1.0"
 description = "Data360 MCP server — Macro Economic Intelligence capability for the Business Research Agent."
