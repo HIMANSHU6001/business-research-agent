@@ -19,3 +19,4 @@ class ResearchState(TypedDict):
     # Supervisor Routing State
     current_phase: str # "scoping", "collection", "analysis", "synthesis", "complete"
     next_agent: Optional[str] 
+    agent_task: Optional[str]

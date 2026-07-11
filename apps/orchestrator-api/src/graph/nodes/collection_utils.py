@@ -8,7 +8,7 @@ class ReactAgentState(TypedDict):
     messages: Annotated[list, add_messages]
 
 
-def compress_agent_messages(messages, max_chars=12000):
+def compress_agent_messages(messages, max_chars=6000):
     """Compress message history to stay within token limits.
 
     Preserves:

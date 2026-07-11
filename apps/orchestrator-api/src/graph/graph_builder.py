@@ -4,7 +4,13 @@ from graph.nodes.scoping import clarify_with_user, write_research_brief
 from graph.nodes.financial_agent import run_financial_agent
 from graph.nodes.macro_agent import run_macro_agent
 from graph.nodes.trends_agent import run_trends_agent
-from graph.nodes.collection_supervisor import run_collection_synthesizer
+from graph.nodes.collection_supervisor import run_collection_supervisor, run_collection_synthesizer
+
+def route_collection(state: ResearchState) -> str:
+    next_agent = state.get("next_agent")
+    if next_agent == "analysis_supervisor" or not next_agent:
+        return "collection_synthesizer"
+    return next_agent
 
 def build_research_graph():
     # Initialize the graph with our state schema
@@ -15,6 +21,7 @@ def build_research_graph():
     builder.add_node("write_research_brief", write_research_brief)
     
     # Add collection nodes
+    builder.add_node("data_collection_supervisor", run_collection_supervisor)
     builder.add_node("financial_agent", run_financial_agent)
     builder.add_node("macro_agent", run_macro_agent)
     builder.add_node("trends_agent", run_trends_agent)
@@ -23,15 +30,25 @@ def build_research_graph():
     # Wiring the flow
     builder.add_edge(START, "clarify_with_user")
     
-    # Fan-out from write_research_brief to parallel collection agents
-    builder.add_edge("write_research_brief", "financial_agent")
-    builder.add_edge("write_research_brief", "macro_agent")
-    builder.add_edge("write_research_brief", "trends_agent")
+    # After research brief is written, start data collection routing
+    builder.add_edge("write_research_brief", "data_collection_supervisor")
     
-    # Fan-in from parallel collection agents to collection synthesizer
-    builder.add_edge("financial_agent", "collection_synthesizer")
-    builder.add_edge("macro_agent", "collection_synthesizer")
-    builder.add_edge("trends_agent", "collection_synthesizer")
+    # Dynamic routing from supervisor
+    builder.add_conditional_edges(
+        "data_collection_supervisor",
+        route_collection,
+        {
+            "financial_agent": "financial_agent",
+            "macro_agent": "macro_agent",
+            "trends_agent": "trends_agent",
+            "collection_synthesizer": "collection_synthesizer"
+        }
+    )
+    
+    # Capability agents route back to the supervisor
+    builder.add_edge("financial_agent", "data_collection_supervisor")
+    builder.add_edge("macro_agent", "data_collection_supervisor")
+    builder.add_edge("trends_agent", "data_collection_supervisor")
     
     # Synthesizer routes to END
     builder.add_edge("collection_synthesizer", END)

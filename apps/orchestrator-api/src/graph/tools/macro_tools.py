@@ -60,7 +60,7 @@ async def data360_summarize_data(
     database_id: str,
     indicator_id: str,
     research_id: str,
-    country_code: str = None,
+    country_code: str,
     start_year: int = None,
     end_year: int = None,
 ) -> str:
@@ -73,13 +73,15 @@ async def data360_summarize_data(
         database_id: Database identifier (e.g. "WB_WDI").
         indicator_id: Indicator ID (e.g. "WB_WDI_NY_GDP_PCAP_CD").
         research_id: The current research session ID (for context only, not passed to MCP).
-        country_code: Semicolon-separated ISO country codes (e.g. "IND;CHN").
+        country_code: REQUIRED. Semicolon-separated ISO country codes (e.g. "IND;CHN").
         start_year: Start year (integer).
         end_year: End year (integer).
     """
-    args = {"database_id": database_id, "indicator_id": indicator_id}
-    if country_code:
-        args["country_code"] = country_code
+    args = {
+        "database_id": database_id,
+        "indicator_id": indicator_id,
+        "country_code": country_code,
+    }
     if start_year:
         args["start_year"] = start_year
     if end_year:

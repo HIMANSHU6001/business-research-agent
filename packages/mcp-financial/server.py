@@ -402,4 +402,4 @@ def analytics_sliding_window(
 # SSE transport (docker-compose expects uvicorn server:app on port 8000)
 # ---------------------------------------------------------------------------
 
-app = mcp.http_app()
+app = mcp.http_app(path="/sse", transport="sse")

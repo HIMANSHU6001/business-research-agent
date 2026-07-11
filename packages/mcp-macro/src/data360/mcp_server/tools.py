@@ -1,4 +1,4 @@
-﻿"""MCP Tools for the Data360 server.
+"""MCP Tools for the Data360 server.
 
 Thin wrapper layer that registers the 6 required API functions as MCP tools
 with optimized signatures and concise docstrings to reduce token context bloat.
@@ -145,7 +145,7 @@ async def _get_disaggregation(
 async def _summarize_data(
     database_id: str,
     indicator_id: str,
-    country_code: str | None = None,
+    country_code: str,
     disaggregation_filters: dict[str, str | None] | None = None,
     start_year: int | str | None = None,
     end_year: int | str | None = None,
@@ -159,7 +159,7 @@ async def _summarize_data(
     Args:
         database_id: Database identifier, e.g. WB_WDI.
         indicator_id: Indicator ID, e.g. WB_WDI_NY_GDP_PCAP_KD.
-        country_code: Semicolon-separated ISO country codes.
+        country_code: REQUIRED. Semicolon-separated ISO country codes. Use 'WLD' for global aggregate.
         disaggregation_filters: Optional dimension filters.
         start_year: Start year inclusive.
         end_year: End year inclusive.

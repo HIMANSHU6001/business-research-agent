@@ -2856,7 +2856,7 @@ _GROUPBY_FIELD_MAP: dict[str, str] = {
 async def summarize_data(
     database_id: str,
     indicator_id: str,
-    country_code: str | None = None,
+    country_code: str,
     disaggregation_filters: dict[str, str | None] | None = None,
     start_year: int | None = None,
     end_year: int | None = None,
@@ -2887,7 +2887,7 @@ async def summarize_data(
     Args:
         database_id: Database identifier (e.g., "WB_WDI", "WB_GS").
         indicator_id: Indicator ID (e.g., "WB_WDI_NY_GDP_PCAP_KD").
-        country_code: Optional 3-letter code or semicolon-separated list (e.g. "KEN;NGA").
+        country_code: REQUIRED. 3-letter code or semicolon-separated list (e.g. "KEN;NGA"). Use 'WLD' for world.
         disaggregation_filters: Optional dimension filters (e.g. {"UNIT_MEASURE": "KD"}).
             Filters specified here are honoured as-is and suppress auto-detection for
             that dimension. Pass {"SEX": "_T"} to force totals only, or {"SEX": None}

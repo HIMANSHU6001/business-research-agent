@@ -43,9 +43,10 @@ You collect facts — you do NOT analyze, interpret, or draw conclusions.
    - Other intelligence tools (news sentiment, insider transactions, etc.) will return raw data for you to summarize in your report.
 
 ## Critical rules:
-- Pass the research_id from the brief to all tool calls that require it.
+- Pass the research_id to all tool calls that require it.
 - Do NOT hallucinate data values. Only reference what tools return to you.
 - Always call Think tool after a tool call is done and reflect on your next steps.
+- Remember you have limited turns only so stop when you have enough data to answer confidently.
 
 ## Output:
 Write a concise Financial Intelligence Report that:
@@ -79,13 +80,13 @@ financial_agent_executor = create_thinking_react_agent(model, financial_tools)
 async def run_financial_agent(state: ResearchState) -> dict:
     """Collects company-specific financial evidence via Alpha Vantage MCP."""
     print(f"--- FINANCIAL INTELLIGENCE: {state['research_id']} ---")
-    research_brief = state.get("research_brief") or ""
     research_id = state.get("research_id") or ""
+    agent_task = state.get("agent_task") or "Collect all relevant financial indicators."
     
     inputs = {
         "messages": [
             SystemMessage(content=FINANCIAL_SYSTEM_PROMPT),
-            HumanMessage(content=f"Research Brief:\n{research_brief}\n\nResearch ID: {research_id}\n\nCollect all relevant financial indicators.")
+            HumanMessage(content=f"Research ID: {research_id}\n\nTask:\n{agent_task}")
         ]
     }
     

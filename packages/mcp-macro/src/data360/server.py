@@ -201,8 +201,8 @@ class AuditLogMiddleware(BaseHTTPMiddleware):
 mcp.settings.stateless_http = True
 
 # NOTE: import to be able to run the server with all definitions loaded
-# path="/mcp" means the MCP endpoint lives at /mcp (no trailing slash needed)
-mcp_app = mcp.http_app(path="/mcp")
+# path="/sse" means the MCP SSE endpoint lives at /sse
+mcp_app = mcp.http_app(path="/sse", transport="sse")
 
 
 async def health_check(request: StarletteRequest) -> JSONResponse:

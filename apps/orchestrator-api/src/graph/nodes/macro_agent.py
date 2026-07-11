@@ -37,7 +37,7 @@ You collect facts — you do NOT analyze, interpret, or draw conclusions.
 
 ## Critical rules:
 - Always pass start_year and end_year as integers (e.g. 2019, not "2019").
-- Pass the research_id from the brief to all tool calls that require it.
+- Pass the research_id to all tool calls that require it.
 - Never guess indicator IDs — always search first.
 - Do NOT hallucinate data values. Only reference what tools return to you.
 - Always call Think tool after a tool call is done and reflect on your next steps.
@@ -70,13 +70,13 @@ macro_agent_executor = create_thinking_react_agent(model, macro_tools)
 async def run_macro_agent(state: ResearchState) -> dict:
     """Collects country-level macroeconomic indicators via Data 360 MCP."""
     print(f"--- MACRO ECONOMIC INTELLIGENCE: {state['research_id']} ---")
-    research_brief = state.get("research_brief") or ""
     research_id = state.get("research_id") or ""
+    agent_task = state.get("agent_task") or "Collect all relevant macroeconomic indicators."
     
     inputs = {
         "messages": [
             SystemMessage(content=MACRO_SYSTEM_PROMPT),
-            HumanMessage(content=f"Research Brief:\n{research_brief}\n\nResearch ID: {research_id}\n\nCollect all relevant macroeconomic indicators.")
+            HumanMessage(content=f"Research ID: {research_id}\n\nTask:\n{agent_task}")
         ]
     }
     

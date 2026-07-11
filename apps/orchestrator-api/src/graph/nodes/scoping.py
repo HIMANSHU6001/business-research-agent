@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field
 
 from langchain_groq import ChatGroq
 from langchain_core.messages import HumanMessage, AIMessage, get_buffer_string
+from langchain_core.output_parsers import PydanticOutputParser
 from langgraph.graph import END
 from langgraph.types import Command
 
@@ -45,31 +46,34 @@ class ResearchScope(BaseModel):
         description="The single most appropriate analytical framework for this research."
     )
 
+clarify_parser = PydanticOutputParser(pydantic_object=ClarifyWithUser)
+brief_parser = PydanticOutputParser(pydantic_object=ResearchScope)
+
 # ===== PROMPTS =====
 
-CLARIFY_PROMPT = """You are the Scoping Agent for a strictly defined Business Research multi-agent system.
-Your system has EXACTLY three data collection capabilities. It cannot search the general web for anything else:
-1. Financial Intelligence (Alpha Vantage): Public company financials, balance sheets, income statements, market data.
-2. Macro Economic Intelligence (World Bank/Data360): Country-level economic indicators (GDP, inflation, PPP, population).
-3. Trends Intelligence (Google Trends): Consumer search interest for specific keywords.
+CLARIFY_PROMPT = """You are the Scoping Agent for a Business Research multi-agent system.
+Your job is to evaluate the user's request. Do not be overly pedantic. If a requested metric falls broadly under company finance, macroeconomics, or consumer trends, assume our pipelines can handle it.
 
-Review the conversation history. 
-1. Is the request within the scope of our three capabilities?
-2. Does it contain specific enough targets (countries, or trend keywords) and a temporal scope (timeframe)?
+Our capabilities:
+1. Financial Intelligence: Public company fundamentals, market data, and corporate news.
+2. Macro Economic Intelligence: Country-level economic, demographic, and labor indicators (e.g., GDP, inflation, unemployment, trade, population).
+3. Trends Intelligence: Consumer search interest and keyword trends.
 
-If NO (it is outside our capabilities, or lacks specific entities/timeframes), you must ask a precise, direct question to get the missing parameters. Do NOT ask for information our tools cannot fetch.
-If YES, provide a brief 1-sentence verification of the research goal.
+Review the Conversation History.
+1. Scope Check: Is this request fundamentally related to our capabilities? (e.g., asking for a Python script or a recipe is out of scope).
+2. Parameter Check: Does the request contain a target entity (company/country/keyword) and a temporal scope (timeframe/years)?
+
+Decision Logic:
+- If the request is IN SCOPE but missing a target or timeframe, ask a concise, direct question to get the missing parameter.
+- If the request is entirely OUT OF SCOPE, state our specific capabilities and ask how you can help within those bounds.
+- If the request is IN SCOPE and ACTIONABLE, verify the goal in one sentence.
 
 Current Date: {date}
 Conversation History:
 {messages}
 
-Return a valid JSON object with these keys:
-- "need_clarification" (boolean)
-- "question" (string, empty if no clarification)
-- "verification" (string, empty if clarification needed)
-
-Example: {{"need_clarification": false, "question": "", "verification": "Goal identified: Analyzing India's GDP."}}
+{format_instructions}
+Output only the raw JSON. Do not include markdown formatting blocks or conversational filler.
 """
 
 BRIEF_PROMPT = """You are the Scoping Agent for a Business Research multi-agent system.
@@ -85,7 +89,10 @@ Then, select the single most appropriate analytical framework (SWOT, PESTEL, POR
 
 Current Date: {date}
 Conversation History:
-{messages}"""
+{messages}
+
+{format_instructions}
+Output only the raw JSON. Do not include markdown formatting blocks or conversational filler."""
 
 # ===== WORKFLOW NODES =====
 
@@ -101,12 +108,13 @@ def clarify_with_user(state: ResearchState) -> Command[Literal["write_research_b
         print("Turn budget exceeded for scoping. Forcing brief generation.")
         return Command(goto="write_research_brief")
 
-    structured_output_model = model.with_structured_output(ClarifyWithUser)
+    structured_output_model = model.with_structured_output(ClarifyWithUser, method="json_mode")
 
     response = structured_output_model.invoke([
         HumanMessage(content=CLARIFY_PROMPT.format(
             messages=get_buffer_string(state.get("messages", [])), 
-            date=get_today_str()
+            date=get_today_str(),
+            format_instructions=clarify_parser.get_format_instructions()
         ))
     ])
 
@@ -130,12 +138,13 @@ def write_research_brief(state: ResearchState) -> dict:
     """
     print(f"--- SCOPING: GENERATING BRIEF ({state['research_id']}) ---")
     
-    structured_output_model = model.with_structured_output(ResearchScope)
+    structured_output_model = model.with_structured_output(ResearchScope, method="json_mode")
 
     response = structured_output_model.invoke([
         HumanMessage(content=BRIEF_PROMPT.format(
             messages=get_buffer_string(state.get("messages", [])),
-            date=get_today_str()
+            date=get_today_str(),
+            format_instructions=brief_parser.get_format_instructions()
         ))
     ])
 

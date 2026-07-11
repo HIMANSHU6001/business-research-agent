@@ -28,4 +28,4 @@ def calculate_summary_statistics(parquet_path: str, column_name: str) -> str:
     except Exception as e:
         return f"Error calculating statistics: {str(e)}"
 
-app = mcp.http_app()
+app = mcp.http_app(path="/sse", transport="sse")
