@@ -23,21 +23,25 @@ async def generate_semantic_summary(artifact_id: str, sample_data_json: str, sou
             max_tokens=150,
         )
         system_prompt = "You are a helpful data cataloging assistant."
-        user_prompt = f"""Write a 2-3 sentence semantic summary of the following dataset utility.
-Dataset ID: {artifact_id}
-Source MCP: {source_mcp}
-Sample Data (JSON):
-{sample_data_json[:2000]}
+        user_prompt = """Write a 2-3 sentence semantic summary of the following dataset utility.
+    Dataset ID: {artifact_id}
+    Source MCP: {source_mcp}
+    Sample Data (JSON):
+    {sample_data}
 
-Focus on what this data represents, its granularity, and its potential utility for business research. Keep it concise, professional, and strictly under 3 sentences."""
-        
+    Focus on what this data represents, its granularity, and its potential utility for business research. Keep it concise, professional, and strictly under 3 sentences."""
+            
         prompt = ChatPromptTemplate.from_messages([
             ("system", system_prompt),
             ("user", user_prompt)
         ])
         
         chain = prompt | llm
-        response = await chain.ainvoke({})
+        response = await chain.ainvoke({
+            "artifact_id": artifact_id,
+            "source_mcp": source_mcp,
+            "sample_data": sample_data_json[:2000]
+        })
         return str(response.content).strip()
     except Exception as e:
         print(f"Error calling LLM for summary: {e}")
@@ -192,7 +196,12 @@ async def ingest_to_db(research_id: str, artifact_id: str, source_mcp: str, raw_
             
             await session.commit()
             
-            # Return catalog_id and sample_json to spawn background task
+            # Spawn background LLM summarization task automatically
+            asyncio.create_task(
+                update_catalog_summary(catalog_id, artifact_id, sample_json, source_mcp)
+            )
+            
+            # Return catalog_id and sample_json to caller
             return str(catalog_id), sample_json
             
         except Exception as e:

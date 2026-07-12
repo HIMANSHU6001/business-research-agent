@@ -16,6 +16,9 @@ class ResearchState(TypedDict):
     # Collection Tracker
     collected_artifacts: List[str]
     
+    # Analysis Tracker
+    analysis_reports: List[str]
+    
     # Supervisor Routing State
     current_phase: str # "scoping", "collection", "analysis", "synthesis", "complete"
     next_agent: Optional[str] 

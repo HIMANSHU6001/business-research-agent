@@ -104,6 +104,18 @@ async def run_collection_synthesizer(state: ResearchState) -> dict:
     chain = prompt | llm
     result = await chain.ainvoke({"reports": "\n\n".join(reports)})
     
+    try:
+        from context.knowledge import KnowledgeManager
+        km = KnowledgeManager()
+        await km.store_context(
+            research_id=state.get("research_id", ""),
+            agent_namespace="collection_supervisor",
+            task_context="Synthesized Data Collection Report",
+            content=result.content
+        )
+    except Exception as e:
+        print(f"Failed to store context in pgVector for collection_supervisor: {e}")
+    
     return {
         "messages": [AIMessage(content=result.content, name="collection_supervisor")],
         "current_phase": "analysis",

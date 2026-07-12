@@ -63,8 +63,8 @@ class KnowledgeManager:
                 text("""
                     WITH dense_search AS (
                         SELECT id, content, task_context, created_at,
-                               embedding <=> :query_embedding::vector AS distance,
-                               ROW_NUMBER() OVER(ORDER BY embedding <=> :query_embedding::vector) as dense_rank
+                               embedding <=> CAST(:query_embedding AS vector) AS distance,
+                               ROW_NUMBER() OVER(ORDER BY embedding <=> CAST(:query_embedding AS vector)) as dense_rank
                         FROM semantic_memory
                         WHERE research_id = :research_id
                         ORDER BY distance

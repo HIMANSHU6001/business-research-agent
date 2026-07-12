@@ -10,7 +10,7 @@ from graph.tools.macro_tools import (
     data360_compare_countries,
 )
 from graph.tools.common_tools import think
-from graph.nodes.collection_utils import create_thinking_react_agent
+from graph.nodes.collection.collection_utils import create_thinking_react_agent
 
 model = ChatGroq(model="llama-3.1-8b-instant", temperature=0.1)
 
@@ -83,6 +83,18 @@ async def run_macro_agent(state: ResearchState) -> dict:
     config = {"recursion_limit": 25}
     response = await macro_agent_executor.ainvoke(inputs, config=config)
     final_response = response["messages"][-1]
+    
+    try:
+        from context.knowledge import KnowledgeManager
+        km = KnowledgeManager()
+        await km.store_context(
+            research_id=research_id,
+            agent_namespace="macro_agent",
+            task_context=agent_task,
+            content=final_response.content
+        )
+    except Exception as e:
+        print(f"Failed to store context in pgVector for macro_agent: {e}")
     
     return {
         "messages": [AIMessage(content=final_response.content, name="macro_agent")]
