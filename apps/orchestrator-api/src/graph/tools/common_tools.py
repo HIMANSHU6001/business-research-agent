@@ -1,7 +1,7 @@
 from langchain_core.tools import tool
 
 @tool
-def think(reflection: str) -> str:
+def think(reflection: str = "") -> str:
     """Tool for strategic reflection on research progress and decision-making.
 
     Use this tool after each search to analyze results and plan next steps systematically.

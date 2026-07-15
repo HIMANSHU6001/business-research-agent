@@ -30,8 +30,17 @@ def init_duckdb() -> duckdb.DuckDBPyConnection:
         db_dir = os.getenv("DUCKDB_DATA_DIR", "/shared/workspaces")
         os.makedirs(db_dir, exist_ok=True)
         db_path = os.path.join(db_dir, "workspace.db")
-        # Initialize the global connection in read/write mode
-        _duckdb_conn = duckdb.connect(db_path, read_only=False)
+        # Initialize the global connection in read/write mode with retries for Windows locks
+        import time
+        max_retries = 5
+        for attempt in range(max_retries):
+            try:
+                _duckdb_conn = duckdb.connect(db_path, read_only=False)
+                break
+            except Exception as e:
+                if attempt == max_retries - 1:
+                    raise e
+                time.sleep(1)
     return _duckdb_conn
 
 def get_duckdb_conn() -> duckdb.DuckDBPyConnection:

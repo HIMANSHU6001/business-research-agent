@@ -5,20 +5,15 @@ import datetime
 import asyncio
 import pandas as pd
 from sqlalchemy import text
-from langchain_groq import ChatGroq
+from llm_utils import get_chat_groq
 from langchain_core.prompts import ChatPromptTemplate
 from database import get_duckdb_conn, AsyncSessionLocal
 
 async def generate_semantic_summary(artifact_id: str, sample_data_json: str, source_mcp: str) -> str:
     """Calls the Groq LLM to generate a 2-3 sentence semantic summary of the data."""
-    api_key = os.getenv("GROQ_API_KEY")
-    if not api_key:
-        return f"Semantic data catalog for {artifact_id} collected from {source_mcp}."
-
     try:
-        llm = ChatGroq(
-            api_key=api_key,
-            model="llama-3.1-8b-instant",
+        llm = get_chat_groq(
+            model="qwen/qwen3-32b",
             temperature=0.2,
             max_tokens=150,
         )
@@ -103,23 +98,85 @@ def map_pandas_dtype_to_sql(dtype) -> str:
     else:
         return "VARCHAR"
 
-async def ingest_to_db(research_id: str, artifact_id: str, source_mcp: str, raw_json: any, inputs: dict = None) -> str:
+async def ingest_to_db(research_id: str, artifact_id: str, source_mcp: str, raw_json: any, inputs: dict = None, citation: str = None) -> str:
     """Ingest raw JSON payload to Parquet via DuckDB and register metadata in Postgres."""
-    # Ensure research_id is a UUID
-    r_uuid = uuid.UUID(research_id)
+    # Ensure research_id is a UUID, fallback to zero-UUID if missing (for Studio testing)
+    try:
+        r_uuid = uuid.UUID(research_id)
+    except (ValueError, TypeError):
+        r_uuid = uuid.UUID("00000000-0000-0000-0000-000000000000")
+        research_id = str(r_uuid)
     
     def _process_data():
         # 1. Flatten the raw_json and convert to Pandas DataFrame
         data_to_load = raw_json
         if isinstance(raw_json, dict):
-            for key in ["data", "results", "entries", "records"]:
-                if key in raw_json and isinstance(raw_json[key], list):
-                    data_to_load = raw_json[key]
-                    break
+            # Google Trends special cases
+            if "interest_over_time" in raw_json:
+                timeline = raw_json["interest_over_time"].get("timeline_data", [])
+                # Pivot the timeline_data so each query becomes its own numeric column (Wide format)
+                pivoted_data = []
+                for row in timeline:
+                    new_row = {"date": row.get("date"), "timestamp": row.get("timestamp")}
+                    for val_obj in row.get("values", []):
+                        query_name = val_obj.get("query", "value")
+                        new_row[query_name] = val_obj.get("extracted_value") or val_obj.get("value")
+                    pivoted_data.append(new_row)
+                data_to_load = pivoted_data
+            elif "interest_by_region" in raw_json and isinstance(raw_json["interest_by_region"], list):
+                data_to_load = raw_json["interest_by_region"]
+            elif "compared_breakdown_by_region" in raw_json and isinstance(raw_json["compared_breakdown_by_region"], list):
+                data_to_load = raw_json["compared_breakdown_by_region"]
+            else:
+                # Alpha Vantage financial payload flattening
+                symbol = raw_json.get("symbol", "")
+                
+                # Check for Alpha Vantage nested list keys
+                av_keys = ["annualReports", "quarterlyReports", "annualEarnings", "quarterlyEarnings"]
+                found_av_list = None
+                for k in av_keys:
+                    if k in raw_json and isinstance(raw_json[k], list):
+                        found_av_list = raw_json[k]
+                        break
+                        
+                if found_av_list is not None:
+                    # Flatten it by injecting the symbol into each row
+                    flattened = []
+                    for row in found_av_list:
+                        new_row = {"symbol": symbol}
+                        new_row.update(row)
+                        flattened.append(new_row)
+                    data_to_load = flattened
+                else:
+                    # Default generic extraction
+                    for key in ["data", "results", "entries", "records"]:
+                        if key in raw_json and isinstance(raw_json[key], list):
+                            data_to_load = raw_json[key]
+                            break
             if data_to_load is None:
                 data_to_load = [raw_json]
         
         df = pd.json_normalize(data_to_load)
+        
+        # Convert to numeric where possible, but KEEP all columns
+        df.replace(["None", "", "N/A", "null"], pd.NA, inplace=True)
+        for col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors='ignore')
+            
+        # Drop columns that are completely empty/null to save schema token space
+        df.dropna(axis=1, how='all', inplace=True)
+            
+        if len(df.columns) == 0:
+            raise ValueError("Data payload is completely empty or null. Nothing to ingest.")
+            
+        # Parquet doesn't natively support nested lists/dicts well without schema definition,
+        # so convert any remaining complex object columns to JSON strings.
+        for col in df.columns:
+            if df[col].dtype == 'object':
+                # Check if first non-null element is dict or list
+                first_valid = df[col].dropna().iloc[0] if not df[col].dropna().empty else None
+                if isinstance(first_valid, (list, dict)):
+                    df[col] = df[col].apply(lambda x: json.dumps(x) if isinstance(x, (list, dict)) else x)
         
         db_dir = os.getenv("DUCKDB_DATA_DIR", "/shared/workspaces")
         research_dir = os.path.join(db_dir, str(research_id))
@@ -172,11 +229,11 @@ async def ingest_to_db(research_id: str, artifact_id: str, source_mcp: str, raw_
                 INSERT INTO semantic_catalog (
                     id, research_id, artifact_id, source_mcp, db_table_pointer, 
                     schema_ref, row_count, time_range_start, time_range_end, 
-                    inputs, description, status
+                    inputs, description, status, citation
                 ) VALUES (
                     :id, :research_id, :artifact_id, :source_mcp, :db_table_pointer,
                     :schema_ref, :row_count, :time_range_start, :time_range_end,
-                    :inputs, :description, :status
+                    :inputs, :description, :status, :citation
                 )
             """)
             await session.execute(catalog_stmt, {
@@ -191,7 +248,8 @@ async def ingest_to_db(research_id: str, artifact_id: str, source_mcp: str, raw_
                 "time_range_end": time_end,
                 "inputs": json.dumps(inputs) if inputs else None,
                 "description": "Generating summary...",
-                "status": "PENDING"
+                "status": "PENDING",
+                "citation": citation
             })
             
             await session.commit()
@@ -207,3 +265,23 @@ async def ingest_to_db(research_id: str, artifact_id: str, source_mcp: str, raw_
         except Exception as e:
             await session.rollback()
             raise e
+
+async def get_citations_for_research(research_id: str) -> list[str]:
+    """Fetch all automated citations associated with a research_id."""
+    try:
+        r_uuid = uuid.UUID(research_id)
+    except (ValueError, TypeError):
+        return []
+        
+    async with AsyncSessionLocal() as session:
+        stmt = text("""
+            SELECT citation 
+            FROM semantic_catalog 
+            WHERE research_id = :research_id 
+              AND citation IS NOT NULL
+        """)
+        result = await session.execute(stmt, {"research_id": r_uuid})
+        citations = []
+        for row in result:
+            citations.append(row[0])
+        return citations

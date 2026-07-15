@@ -40,29 +40,41 @@ def compress_agent_messages(messages, max_chars=6000):
     if not middle:
         return messages
 
-    summary_lines = []
-    for msg in middle:
+    compressed_middle = []
+    i = 0
+    while i < len(middle):
+        msg = middle[i]
+        
         if isinstance(msg, AIMessage) and getattr(msg, 'tool_calls', None):
-            names = [tc.get('name', '?') for tc in msg.tool_calls]
-            summary_lines.append(f"• Called: {', '.join(names)}")
-        elif isinstance(msg, ToolMessage):
-            name = getattr(msg, 'name', '?')
-            if name == 'think':
+            # Check if this AIMessage only contains 'think' tool calls
+            is_think = all(tc.get('name') == 'think' for tc in msg.tool_calls)
+            if is_think:
+                i += 1
+                # Skip the corresponding ToolMessage(s) for 'think'
+                while i < len(middle) and isinstance(middle[i], ToolMessage):
+                    i += 1
                 continue
+            
+            # Keep other AIMessages intact
+            compressed_middle.append(msg)
+            
+        elif isinstance(msg, ToolMessage):
+            # Truncate content of other tool messages
             content = str(msg.content or '')
-            short = content[:200] + '...' if len(content) > 200 else content
-            summary_lines.append(f"• {name}: {short}")
-        elif isinstance(msg, AIMessage):
-            content = str(msg.content or '')
-            if content:
-                short = content[:150] + '...' if len(content) > 150 else content
-                summary_lines.append(f"• Agent: {short}")
+            if len(content) > 500:
+                compressed_middle.append(ToolMessage(
+                    content=content[:500] + "\n...[TRUNCATED FOR TOKEN LIMITS]...",
+                    name=msg.name,
+                    tool_call_id=msg.tool_call_id
+                ))
+            else:
+                compressed_middle.append(msg)
+        else:
+            compressed_middle.append(msg)
+            
+        i += 1
 
-    if not summary_lines:
-        return head + tail
-
-    summary = SystemMessage(content="[Compressed previous steps]\n" + "\n".join(summary_lines))
-    return head + [summary] + tail
+    return head + compressed_middle + tail
 
 
 def create_thinking_react_agent(model, tools):
@@ -83,7 +95,8 @@ def create_thinking_react_agent(model, tools):
                 force_think = True
                 
         if force_think:
-            response = await bound_model.ainvoke(messages, tool_choice={"type": "function", "function": {"name": "think"}})
+            prompt_injection = HumanMessage(content="You MUST invoke the `think` tool to reflect on your next steps. DO NOT output conversational text. ONLY output the tool call.")
+            response = await bound_model.ainvoke(messages + [prompt_injection], tool_choice="required")
         else:
             response = await bound_model.ainvoke(messages)
             

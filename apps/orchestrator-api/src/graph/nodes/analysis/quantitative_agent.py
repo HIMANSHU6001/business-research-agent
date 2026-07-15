@@ -1,52 +1,48 @@
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
-from langchain_groq import ChatGroq
+from llm_utils import get_chat_groq
 from graph.state import ResearchState
 from graph.tools.common_tools import think
 from graph.tools.analytics_tools import (
     read_catalog,
     get_schema,
-    calculate_summary_statistics
+    get_sample_data,
+    get_descriptive_stats,
+    calculate_correlation,
+    execute_t_test,
+    calculate_trendline
 )
 from graph.nodes.collection.collection_utils import create_thinking_react_agent
 
-model = ChatGroq(model="llama-3.1-8b-instant", temperature=0.1)
+model = get_chat_groq(model="qwen/qwen3-32b", temperature=0.1)
 
-QUANTITATIVE_SYSTEM_PROMPT = """You are the Quantitative Analysis Agent for the Business Research Agent system.
+QUANTITATIVE_SYSTEM_PROMPT = """You are the Quantitative Analysis Agent.
+You execute precise statistical tools on collected data. You do NOT perform calculations yourself. You do NOT try to draw insights or any interpretation from the results of the tests
+You are capped at 35 recursion limit
+# RULES (CRITICAL):
+1. USE REAL DATA: Use `read_catalog` to find valid `artifact_id`s. NEVER guess or make up datasets.
+2. CHECK SCHEMAS FIRST: Use `get_schema` (pass `artifact_ids` as a list) to see exact column names. NEVER query a column that is not in the schema.
+3. HANDLE MISSING/COMPLEX COLUMNS: If the column you need (e.g. 'revenue') is NOT explicitly listed in the schema as a flat numeric column (e.g., if you only see 'annualReports' which is VARCHAR/JSON), you MUST STOP CALLING TOOLS immediately. Output a final plain text report stating the exact column is missing or is too complex to analyze directly. DO NOT loop by calling get_schema or read_catalog again.
+4. FILTERING: Use the `query_filter` parameter in statistical tools to slice data BEFORE analysis when required (e.g. `query_filter="date >= '2023-01-01'"`). This takes standard Pandas query strings.
+5. NO CREATIVITY: You are a strict data processor. Do not invent variables like 'temperature' to correlate against.
+6. STOPPING CONDITION: When your task is complete or if data is missing, STOP calling tools. Write your final numerical report as plain text to signal completion.
 
-Your sole purpose is to perform deterministic quantitative analysis on collected datasets by orchestrating statistical tools.
-You DO NOT perform statistical computation yourself — you select the appropriate tool and interpret the output.
-You NEVER see raw datasets directly. You only see metadata and statistical summaries.
-
-## MANDATORY THINKING STEP (CRITICAL):
-- You MUST invoke the `think` tool as your VERY FIRST step to outline your strategy before calling any other tool.
-- You MUST invoke the `think` tool after receiving results from any tool, to reflect on your progress.
-- Do not call any database or analytics tools without calling the `think` tool in the step immediately preceding it.
-- Reflection Overwrite Rule: When calling `think`, write a fresh, concise reflection containing ONLY your current thoughts, findings, and immediate next steps. 
-
-## Workflow (follow this order strictly):
-1. **Inspect Workspace Catalog**: Use `read_catalog` to discover what datasets have been collected for this research session. Note their `artifact_id` and `parquet_path`.
-2. **Inspect Schema**: For each relevant dataset, use `get_schema` with the `artifact_id` to discover available columns and their data types.
-3. **Execute Analytics**: Use `calculate_summary_statistics` (or other available MCP tools) on the `parquet_path` and a specific numeric column to calculate statistics.
-4. **Synthesize**: Interpret the mathematical findings returned by the tools.
-
-## Critical rules:
-- Always pass the `research_id` to `read_catalog`.
-- Pass exact `parquet_path` strings to the analytics tools, exactly as they are returned by `read_catalog`.
-- Only run analytics on columns that `get_schema` confirms are numeric.
-- Do NOT hallucinate data or numbers. Only report exactly what the tools return.
-
-## Output:
-Write an Evidence-Backed Quantitative Report that:
-- Summarizes the key numerical findings.
-- States the exact statistics (mean, min, max, etc.) for the relevant variables.
-- Mentions which datasets (artifact IDs) these numbers were derived from.
-- Does NOT attempt to interpret the "why" behind the numbers (save that for the qualitative synthesis).
+# WORKFLOW:
+1. `think`: Reflect on your goal.
+2. `read_catalog`: Find the dataset IDs.
+3. `get_schema`: Find the numeric columns.
+4. `get_sample_data`: You MUST call this to view the top 4 rows of the dataset to understand the actual data before analyzing.
+5. Call statistical tools (e.g. `get_descriptive_stats`, `calculate_correlation`, `execute_t_test`, `calculate_trendline`). If columns are missing or data sample looks unanalyzable, skip this step.
+6. Output your Evidence-Backed Quantitative Report in plain text.
 """
 
 quantitative_tools = [
     read_catalog,
     get_schema,
-    calculate_summary_statistics,
+    get_sample_data,
+    get_descriptive_stats,
+    calculate_correlation,
+    execute_t_test,
+    calculate_trendline,
     think,
 ]
 
@@ -66,16 +62,22 @@ async def run_quantitative_agent(state: ResearchState) -> dict:
     inputs = {
         "messages": [
             SystemMessage(content=QUANTITATIVE_SYSTEM_PROMPT),
-            HumanMessage(content=f"Research ID: {research_id}\n\nTask:\n{agent_task}")
+            HumanMessage(content=f"Task:\n{agent_task}")
         ]
     }
     
-    config = {"recursion_limit": 25}
+    config = {"recursion_limit": 35, "configurable": {"research_id": research_id}}
     response = await quantitative_agent_executor.ainvoke(inputs, config=config)
     final_response = response["messages"][-1]
     
+    content = final_response.content
+    if isinstance(content, list):
+        text_content = "\\n".join([c.get("text", "") for c in content if isinstance(c, dict) and "text" in c])
+    else:
+        text_content = str(content)
+    
     new_reports = reports.copy()
-    new_reports.append("## Quantitative Findings\n" + final_response.content)
+    new_reports.append("## Quantitative Findings\\n" + text_content)
 
     return {
         "analysis_reports": new_reports,

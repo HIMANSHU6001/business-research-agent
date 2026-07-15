@@ -17,6 +17,7 @@ Tool groups per TRD §7.7.1:
 
 import json
 import os
+import datetime
 
 import httpx
 from fastmcp import FastMCP
@@ -88,9 +89,23 @@ def _make_api_request(function_name: str, params: dict) -> dict | str:
 
     # Parse JSON if possible; fall back to raw text for CSV endpoints
     try:
-        return json.loads(response_text)
+        data = json.loads(response_text)
     except json.JSONDecodeError:
-        return response_text
+        data = response_text
+
+    current_date = datetime.datetime.now().strftime("%d %B %Y")
+    current_year = datetime.datetime.now().strftime("%Y")
+    
+    # We strip the apikey from the URL for the citation so it doesn't leak
+    clean_url = str(response.url).replace(f"&apikey={API_KEY}", "").replace(f"?apikey={API_KEY}", "?")
+
+    return {
+        "metadata": {
+            "in_text": "(Alpha Vantage)",
+            "full_citation": f"Alpha Vantage APIs. Alpha Vantage Inc., {current_year}, {clean_url}. Accessed {current_date}."
+        },
+        "data": data
+    }
 
 
 # ===========================================================================
@@ -233,169 +248,7 @@ def symbol_search(
 
 
 
-# ===========================================================================
-# alpha_intelligence tools (7)
-#
-# Per TRD §7.7.1 these are NOT intercepted. Results are returned directly
-# to the Financial Intelligence Agent for inclusion in its topic report.
-# ===========================================================================
 
-
-@mcp.tool()
-def news_sentiment(
-    tickers: str = None,
-    topics: str = None,
-    time_from: str = None,
-    time_to: str = None,
-    sort: str = "LATEST",
-    limit: int = 50,
-) -> dict | str:
-    """Returns live and historical market news & sentiment data from premier news outlets worldwide.
-
-    Covers stocks, cryptocurrencies, forex, and topics like fiscal policy,
-    mergers & acquisitions, IPOs.
-
-    Args:
-        tickers: Stock/crypto/forex symbols to filter articles.
-            Example: "IBM" or "COIN,CRYPTO:BTC,FOREX:USD".
-        topics: News topics to filter by.
-            Example: "technology" or "technology,ipo".
-        time_from: Start time range in YYYYMMDDTHHMM format.
-            Example: "20220410T0130".
-        time_to: End time range in YYYYMMDDTHHMM format.
-            Defaults to current time if time_from specified.
-        sort: Sort order — "LATEST" (default), "EARLIEST", or "RELEVANCE".
-        limit: Number of results to return. Default 50, max 1000.
-    """
-    params = {"sort": sort, "limit": str(limit)}
-    if tickers:
-        params["tickers"] = tickers
-    if topics:
-        params["topics"] = topics
-    if time_from:
-        params["time_from"] = time_from
-    if time_to:
-        params["time_to"] = time_to
-    return _make_api_request("NEWS_SENTIMENT", params)
-
-
-@mcp.tool()
-def earnings_call_transcript(symbol: str, quarter: str) -> dict | str:
-    """Returns earnings call transcript for a company in a specific quarter.
-
-    Covers 15+ years of history enriched with LLM-based sentiment signals.
-
-    Args:
-        symbol: Ticker symbol. Example: "IBM".
-        quarter: Fiscal quarter in YYYYQM format. Example: "2024Q1".
-            Supports quarters since 2010Q1.
-    """
-    return _make_api_request(
-        "EARNINGS_CALL_TRANSCRIPT", {"symbol": symbol, "quarter": quarter}
-    )
-
-
-@mcp.tool()
-def top_gainers_losers() -> dict | str:
-    """Returns top 20 gainers, losers, and most active traded tickers in the US market."""
-    return _make_api_request("TOP_GAINERS_LOSERS", {})
-
-
-@mcp.tool()
-def insider_transactions(symbol: str, from_date: str = None) -> dict | str:
-    """Returns latest and historical insider transactions by key stakeholders.
-
-    Covers transactions by founders, executives, board members, etc.
-
-    Args:
-        symbol: Ticker symbol. Example: "IBM".
-        from_date: Optional start date in YYYY-MM-DD format. Only return
-            transactions on or after this date. Example: "2026-03-01".
-    """
-    params = {"symbol": symbol}
-    if from_date:
-        params["from"] = from_date
-    return _make_api_request("INSIDER_TRANSACTIONS", params)
-
-
-@mcp.tool()
-def institutional_holdings(symbol: str) -> dict | str:
-    """Returns institutional ownership and holdings information for an equity.
-
-    Args:
-        symbol: Ticker symbol. Example: "IBM".
-    """
-    return _make_api_request("INSTITUTIONAL_HOLDINGS", {"symbol": symbol})
-
-
-@mcp.tool()
-def analytics_fixed_window(
-    symbols: str,
-    range_param: str,
-    interval: str,
-    calculations: str,
-    ohlc: str = "close",
-) -> dict | str:
-    """Returns advanced analytics metrics for time series over a fixed temporal window.
-
-    Calculates metrics like total return, variance, auto-correlation, etc.
-
-    Args:
-        symbols: Comma-separated list of symbols.
-        range_param: Date range for the series. Defaults to full equity history.
-        interval: Time interval — 1min, 5min, 15min, 30min, 60min, DAILY,
-            WEEKLY, MONTHLY.
-        calculations: Comma-separated list of analytics metrics to calculate.
-        ohlc: OHLC field for calculation — open, high, low, close.
-            Default "close".
-    """
-    return _make_api_request(
-        "ANALYTICS_FIXED_WINDOW",
-        {
-            "SYMBOLS": symbols,
-            "RANGE": range_param,
-            "INTERVAL": interval,
-            "CALCULATIONS": calculations,
-            "OHLC": ohlc,
-        },
-    )
-
-
-@mcp.tool()
-def analytics_sliding_window(
-    symbols: str,
-    range_param: str,
-    interval: str,
-    window_size: int,
-    calculations: str,
-    ohlc: str = "close",
-) -> dict | str:
-    """Returns advanced analytics metrics for time series over sliding time windows.
-
-    Calculates moving metrics like variance over time periods.
-
-    Args:
-        symbols: Comma-separated list of symbols.
-        range_param: Date range for the series. Defaults to full equity history.
-        interval: Time interval — 1min, 5min, 15min, 30min, 60min, DAILY,
-            WEEKLY, MONTHLY.
-        window_size: Size of moving window. Minimum 10, larger recommended
-            for statistical significance.
-        calculations: Comma-separated analytics metrics.
-        ohlc: OHLC field for calculation — open, high, low, close.
-            Default "close".
-    """
-    return _make_api_request(
-        "ANALYTICS_SLIDING_WINDOW",
-        {
-            "SYMBOLS": symbols,
-            "RANGE": range_param,
-            "INTERVAL": interval,
-            "WINDOW_SIZE": str(window_size),
-            "CALCULATIONS": calculations,
-            "OHLC": ohlc,
-        },
-    )
 
 
 # ---------------------------------------------------------------------------

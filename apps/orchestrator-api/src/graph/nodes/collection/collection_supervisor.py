@@ -1,7 +1,7 @@
 from typing import Literal
 from pydantic import BaseModel, Field
 from graph.state import ResearchState
-from langchain_groq import ChatGroq
+from llm_utils import get_chat_groq
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.messages import AIMessage, SystemMessage, HumanMessage
 from langchain_core.output_parsers import PydanticOutputParser
@@ -21,7 +21,7 @@ class SupervisorDecision(BaseModel):
     )
 
 
-llm = ChatGroq(model="llama-3.3-70b-versatile", temperature=0.1)
+llm = get_chat_groq(model="qwen/qwen3-32b", temperature=0.1)
 structured_llm = llm.with_structured_output(SupervisorDecision, method='json_mode')
 supervisor_parser = PydanticOutputParser(pydantic_object=SupervisorDecision)
 
@@ -42,9 +42,11 @@ async def run_collection_supervisor(state: ResearchState) -> dict:
 Your goal is to collect comprehensive evidence for the research brief by routing to capability agents one at a time.
 
 Available agents (they already have their own API access — do NOT ask the human about data sources):
-1. financial_agent: Connects to Alpha Vantage. Collects public company fundamental data (income statement, balance sheet, cash flow, earnings), stock indicators, and news sentiment.
-2. macro_agent: Connects to World Bank Data360. Collects country-level macroeconomic and industry evidence (GDP, inflation, population, trade stats).
+1. financial_agent: Connects to Alpha Vantage. Collects public company fundamental data (company overview, income statement, balance sheet, cash flow, earnings, earnings calendar, listing status, IPO calendar). 
+2. macro_agent: Connects to World Bank Data360. Collects country-level macroeconomic and industry evidence (GDP, inflation, population, trade stats, etc...).
 3. trends_agent: Connects to Google Trends via SerpAPI. Collects consumer demand and search trend evidence over time and by region.
+
+**LIMITATION**: If the agents reports a gap once, do not assign the same task to the agent, just mention the gap in your report
 
 Research Brief:
 {research_brief}
@@ -53,15 +55,16 @@ Reports collected so far:
 {json.dumps(reports, indent=2)}
 
 Rules:
-- MICRO-TASKING IS MANDATORY: You must assign only ONE single atomic metric/task per agent invocation in the `agent_task` field. Do NOT assign collective or multi-part tasks.
-  - Example BAD task: "Collect GDP growth and inflation rate for the last 3 years."
-  - Example GOOD task: "Collect ONLY GDP growth for the last 3 years."
-- If the research brief requires multiple metrics (e.g. GDP and inflation), you must assign one metric, wait for the agent to return the report, and then in the NEXT iteration, route back to the SAME agent to collect the next metric.
 - DO NOT set `agent_task` to 'None' or empty if `next_agent` is not 'FINISH'. This is critical. If `next_agent` is one of the capability agents, `agent_task` MUST contain the specific instruction for that agent.
 - Set `agent_task` to 'None' ONLY when `next_agent` is 'FINISH'.
+- Do NOT expect agents to return the actual raw data values in their reports. If an agent report confirms that an Artifact ID was created for a specific metric, consider that data successfully collected and do NOT assign the same task again.
+- Do NOT pass date constraints or date filters to the financial_agent in `agent_task`. The financial tools pull the full historical dataset automatically, and date filtering is handled later during analysis.
+- ONLY assign tasks that are EXPLICITLY required to fulfill the Research Brief. Do NOT assign agents to collect data (e.g., macro GDP/inflation) just because the agent is available, unless the brief specifically asks for it.
 - Evaluate the collected reports to determine what single metric/data point is missing next.
 - When ALL relevant evidence for ALL required metrics has been gathered, set next_agent to FINISH.
+- **CRITICAL LOOP PREVENTION**: If an agent reports that it cannot find the data, or that it lacks a tool to fetch a specific requested metric, you MUST accept this limitation and move on. Do NOT repeatedly ask for data that cannot be provided. If you have exhausted all possible tools for the requested metrics, you MUST route to FINISH.
 - Your reflection MUST contain concrete reasoning, not vague statements.
+- **BATCHING LIMIT**: NEVER assign more than 3 data points/metrics to fetch in a single turn. If the Research Brief requires many datasets, you MUST assign the most important 1 to 3 items now, wait for the agent to report back, and then assign the rest in subsequent turns.
 
 {supervisor_parser.get_format_instructions()}
 Output ONLY valid JSON."""

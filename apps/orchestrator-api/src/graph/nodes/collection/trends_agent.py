@@ -1,45 +1,34 @@
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
-from langchain_groq import ChatGroq
+from llm_utils import get_chat_groq
 from graph.state import ResearchState
 from graph.tools.trends_tools import (
     interest_by_region,
     interest_over_time,
 )
 from graph.tools.common_tools import think
+from graph.tools.analytics_tools import read_catalog
 from graph.nodes.collection.collection_utils import create_thinking_react_agent
 
-model = ChatGroq(model="llama-3.1-8b-instant", temperature=0.1)
+model = get_chat_groq(model="qwen/qwen3-32b", temperature=0.1)
 
-TRENDS_SYSTEM_PROMPT = """You are the Trends Intelligence Agent for the Business Research Agent system.
+TRENDS_SYSTEM_PROMPT = """You are the Trends Intelligence Agent. Collect Google Trends data via SerpApi. Do NOT analyze.
 
-Your sole purpose is to collect consumer demand and search trend evidence using Google Trends tools via SerpApi.
-You collect facts — you do NOT analyze, interpret, or draw conclusions.
+CRITICAL RULES & WORKFLOW:
+1. ALWAYS use the `think` tool before and after any other tool call to outline strategy and reflect. Keep reflections concise.
+2. BEFORE fetching data, ALWAYS use `read_catalog` to check if the data already exists in the database. DO NOT fetch the same data twice.
+3. Identify key topics from the task.
+3. Use `interest_over_time` and `interest_by_region` to collect trend data. They return confirmation strings.
+4. NEVER hallucinate data or tool arguments.
+5. Do NOT re-call tools to verify artifact IDs. Stop when you have enough data.
 
-## MANDATORY THINKING STEP (CRITICAL):
-- You MUST invoke the `think` tool as your VERY FIRST step to outline your strategy before calling any other tool.
-- You MUST invoke the `think` tool after receiving results from any tool, to reflect on your progress and assess research gaps.
-- Reflection Overwrite Rule: When calling `think`, write a fresh, concise reflection containing ONLY your current thoughts, findings, and immediate next steps.
-
-## Workflow (follow this order strictly):
-1. Identify the key brands, products, or topics from the provided Task instruction.
-2. Use `interest_over_time` and `interest_by_region` to collect trend data for those topics.
-   - Note that these tools will return a confirmation string and automatically ingest the data.
-
-## Critical rules:
-- Pass the research_id to all tool calls that require it.
-- Do NOT hallucinate data values. Only reference what tools return to you.
-- Always call Think tool after a tool call is done and reflect on your next steps.
-- Remember you have limited turns only so stop when you have enough data to answer confidently.
-
-## Output:
-Write a concise Trends Report that:
-- Lists all trend data and artifacts successfully collected (including artifact IDs).
-- Notes any gaps or errors.
+OUTPUT:
+Write a concise report listing collected trend data, Artifact IDs, and any gaps or errors.
 """
 
 trends_tools = [
     interest_by_region,
     interest_over_time,
+    read_catalog,
     think,
 ]
 
@@ -54,11 +43,11 @@ async def run_trends_agent(state: ResearchState) -> dict:
     inputs = {
         "messages": [
             SystemMessage(content=TRENDS_SYSTEM_PROMPT),
-            HumanMessage(content=f"Research ID: {research_id}\n\nTask:\n{agent_task}")
+            HumanMessage(content=f"Task:\n{agent_task}")
         ]
     }
     
-    config = {"recursion_limit": 25}
+    config = {"recursion_limit": 25, "configurable": {"research_id": research_id}}
     response = await trends_agent_executor.ainvoke(inputs, config=config)
     final_response = response["messages"][-1]
     

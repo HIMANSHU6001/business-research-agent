@@ -2,7 +2,7 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-RUN pip install --no-cache-dir mcp fastmcp duckdb pandas numpy uvicorn
+RUN pip install --no-cache-dir mcp fastmcp duckdb "pandas<3.0.0" numpy scipy statsmodels uvicorn pyarrow
 
 COPY . .
 

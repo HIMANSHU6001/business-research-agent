@@ -8,6 +8,7 @@ ingest_to_db middleware handles interception for these tools.
 
 import json
 import os
+import datetime
 
 import httpx
 from fastmcp import FastMCP
@@ -85,9 +86,22 @@ def _make_api_request(data_type: str, query: str, date: str, geo: str) -> dict |
         return {"error": {"message": f"HTTP Error {e.response.status_code}: {response_text}"}}
 
     try:
-        return json.loads(response_text)
+        data = json.loads(response_text)
     except json.JSONDecodeError:
-        return response_text
+        data = response_text
+
+    current_date = datetime.datetime.now().strftime("%d %B %Y")
+    current_year = datetime.datetime.now().strftime("%Y")
+    
+    clean_url = "trends.google.com/"
+    
+    return {
+        "metadata": {
+            "in_text": "(Google Trends)",
+            "full_citation": f"Google Trends. Google LLC, {current_year}, {clean_url}. Accessed {current_date}."
+        },
+        "data": data
+    }
 
 
 # ===========================================================================

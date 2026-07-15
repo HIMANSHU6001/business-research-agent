@@ -107,7 +107,8 @@ async def _get_data(
         offset: Records to skip for pagination.
         ref_area_filter: member_economies_only (default) or none.
     """
-    return await data360_api.get_data(
+    import datetime
+    response_obj = await data360_api.get_data(
         database_id=database_id,
         indicator_id=indicator_id,
         country_code=country_code,
@@ -118,6 +119,22 @@ async def _get_data(
         offset=offset,
         ref_area_filter=ref_area_filter,
     )
+    
+    current_date = datetime.datetime.now().strftime("%d %B %Y")
+    current_year = datetime.datetime.now().strftime("%Y")
+    
+    if hasattr(response_obj, "model_dump"):
+        response_dict = response_obj.model_dump()
+    else:
+        response_dict = dict(response_obj)
+        
+    if not response_dict.get("metadata"):
+        response_dict["metadata"] = {}
+        
+    response_dict["metadata"]["in_text"] = "(World Bank)"
+    response_dict["metadata"]["full_citation"] = f"World Bank Data360 Platform. World Bank Group, {current_year}, data360.worldbank.org/. Accessed {current_date}."
+    
+    return response_dict
 
 
 async def _get_disaggregation(

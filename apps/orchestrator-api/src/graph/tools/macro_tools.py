@@ -1,7 +1,9 @@
+from typing import Optional
 import os
 import json
 import traceback
 from langchain_core.tools import tool
+from langchain_core.runnables import RunnableConfig
 from context.workspace import ingest_to_db
 from mcp_clients import call_mcp_tool
 
@@ -10,9 +12,9 @@ MACRO_MCP_URL = os.getenv("MACRO_MCP_URL", "http://mcp-macro:8000/sse")
 @tool
 async def data360_search_indicators(
     query: str,
-    required_country: str = None,
+    required_country: Optional[str] = None,
     limit: int = 5,
-    database: str = None,
+    database: Optional[str] = None,
 ) -> str:
     """Search for World Bank Data360 indicators by topic.
 
@@ -38,7 +40,7 @@ async def data360_search_indicators(
 async def data360_get_disaggregation(
     database_id: str,
     indicator_id: str,
-    required_country: str = None,
+    required_country: Optional[str] = None,
 ) -> str:
     """Get valid filter values and available time periods for an indicator.
 
@@ -59,10 +61,10 @@ async def data360_get_disaggregation(
 async def data360_summarize_data(
     database_id: str,
     indicator_id: str,
-    research_id: str,
     country_code: str,
-    start_year: int = None,
-    end_year: int = None,
+    config: RunnableConfig,
+    start_year: Optional[int] = None,
+    end_year: Optional[int] = None,
 ) -> str:
     """Compute statistical summary (min, max, mean, trend) for an indicator.
 
@@ -72,7 +74,6 @@ async def data360_summarize_data(
     Args:
         database_id: Database identifier (e.g. "WB_WDI").
         indicator_id: Indicator ID (e.g. "WB_WDI_NY_GDP_PCAP_CD").
-        research_id: The current research session ID (for context only, not passed to MCP).
         country_code: REQUIRED. Semicolon-separated ISO country codes (e.g. "IND;CHN").
         start_year: Start year (integer).
         end_year: End year (integer).
@@ -93,10 +94,10 @@ async def data360_summarize_data(
 async def data360_rank_countries(
     database_id: str,
     indicator_id: str,
-    research_id: str,
-    country_group: str = None,
+    config: RunnableConfig,
+    country_group: Optional[str] = None,
     top_n: int = 10,
-    year: int = None,
+    year: Optional[int] = None,
     order: str = "desc",
 ) -> str:
     """Rank countries by indicator value for a given year.
@@ -107,7 +108,6 @@ async def data360_rank_countries(
     Args:
         database_id: Database identifier (e.g. "WB_WDI").
         indicator_id: Indicator ID (e.g. "WB_WDI_NY_GDP_PCAP_CD").
-        research_id: The current research session ID (for context only, not passed to MCP).
         country_group: Regional/income group code (e.g. "SAS" for South Asia).
         top_n: Number of top results to return (default 10).
         year: Year for ranking snapshot. Auto-selected if omitted.
@@ -126,11 +126,11 @@ async def data360_compare_countries(
     database_id: str,
     indicator_id: str,
     country_codes: str,
-    research_id: str,
-    year: int = None,
+    config: RunnableConfig,
+    year: Optional[int] = None,
     include_time_series: bool = False,
-    start_year: int = None,
-    end_year: int = None,
+    start_year: Optional[int] = None,
+    end_year: Optional[int] = None,
 ) -> str:
     """Compare an indicator across 2 to 8 specific countries.
 
@@ -141,7 +141,6 @@ async def data360_compare_countries(
         database_id: Database identifier (e.g. "WB_WDI").
         indicator_id: Indicator ID (e.g. "WB_WDI_NY_GDP_PCAP_CD").
         country_codes: Semicolon-separated ISO codes (e.g. "IND;CHN;USA").
-        research_id: The current research session ID (for context only, not passed to MCP).
         year: Snapshot year. Auto-selected if omitted.
         include_time_series: Include time-series trend data alongside snapshot.
         start_year: Start year for time-series (integer).
@@ -166,10 +165,10 @@ async def data360_compare_countries(
 async def data360_get_data(
     database_id: str,
     indicator_id: str,
-    research_id: str,
-    country_code: str = None,
-    start_year: int = None,
-    end_year: int = None,
+    config: RunnableConfig,
+    country_code: Optional[str] = None,
+    start_year: Optional[int] = None,
+    end_year: Optional[int] = None,
     disaggregation_filters: dict = None,
 ) -> str:
     """Fetch raw indicator time-series observations and ingest them into the workspace database.
@@ -180,13 +179,13 @@ async def data360_get_data(
 
     Args:
         database_id: Database identifier (e.g. "WB_WDI"). From data360_search_indicators.
-        indicator_id: Indicator ID (e.g. "WB_WDI_NY_GDP_PCAP_CD"). From data360_search_indicators.
-        research_id: Current research session ID for artifact tracking.
+        indicator_id: Indicator ID EXACTLY as returned by search (e.g. "WB_WDI_NY_GDP_PCAP_CD"). DO NOT strip the prefix!
         country_code: Semicolon-separated ISO country codes (e.g. "IND;CHN").
         start_year: Start year (integer, e.g. 2015).
         end_year: End year (integer, e.g. 2024).
         disaggregation_filters: Optional dimension filters from data360_get_disaggregation.
     """
+    research_id = config.get("configurable", {}).get("research_id", "")
     args = {"database_id": database_id, "indicator_id": indicator_id}
     if country_code:
         args["country_code"] = country_code
@@ -219,6 +218,7 @@ async def data360_get_data(
                 source_mcp="data360",
                 raw_json=data_rows,
                 inputs=inputs,
+                citation=f"In-Text: {metadata.get('in_text', '')}\nCitation: {metadata.get('full_citation', '')}" if metadata.get('in_text') else None
             )
             return (
                 f"{len(data_rows)} rows ingested into workspace. "
@@ -227,7 +227,7 @@ async def data360_get_data(
                 f"Source: {metadata.get('database_name', database_id)}."
             )
         else:
-            return f"data360_get_data returned 0 rows for {indicator_id}. Try adjusting the year range or country code."
+            return f"No valid data points available for {indicator_id} in the specified year range or country. This is normal if the data hasn't been published yet."
 
     except (json.JSONDecodeError, Exception) as e:
         tb = traceback.format_exc()
@@ -236,6 +236,6 @@ async def data360_get_data(
 
 
 @tool
-async def fetch_macro_data(indicator: str, country: str, research_id: str) -> str:
+async def fetch_macro_data(indicator: str, country: str, config: RunnableConfig) -> str:
     """Deprecated. Use data360_search_indicators + data360_get_data instead."""
     return "This tool is deprecated. Use the data360_* tools to fetch macroeconomic data."

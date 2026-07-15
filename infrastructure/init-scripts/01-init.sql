@@ -14,6 +14,7 @@ CREATE TABLE semantic_catalog (
     time_range_end TIMESTAMP,
     inputs JSONB,
     description TEXT,
+    citation TEXT, -- Added for automated traceability
     embedding vector(1024),
     fts tsvector GENERATED ALWAYS AS (to_tsvector('english', coalesce(description, '') || ' ' || coalesce(schema_ref, ''))) STORED,
     status VARCHAR(50) DEFAULT 'READY', -- Used to prevent agents from reading while background LLM summarization is pending

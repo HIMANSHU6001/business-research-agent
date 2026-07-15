@@ -6,7 +6,7 @@ import threading
 
 import httpx
 
-_DEFAULT_TIMEOUT = 30.0
+_DEFAULT_TIMEOUT = 120.0
 
 _client: httpx.AsyncClient | None = None
 _client_lock = threading.Lock()
