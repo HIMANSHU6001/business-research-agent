@@ -14,7 +14,7 @@ for i in range(1, 10):
         resp = requests.post(
             "https://api.groq.com/openai/v1/chat/completions",
             headers={"Authorization": f"Bearer {key}"},
-            json={"model": "qwen/qwen3-32b", "messages": [{"role": "user", "content": "hi"}], "max_tokens": 3000}
+            json={"model": "openai/gpt-oss-120b", "messages": [{"role": "user", "content": "hi"}], "max_tokens": 3000}
         )
         if resp.status_code == 429:
             print(f"{key_name}: ERROR 429 - Rate Limited!")

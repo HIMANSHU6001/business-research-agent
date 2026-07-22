@@ -1,10 +1,9 @@
 from typing import List, cast
 from langchain_core.messages import BaseMessage, SystemMessage, HumanMessage
 from graph.state import ResearchState
-from graph.nodes.collection.collection_utils import create_thinking_react_agent
+from graph.nodes.collection.collection_utils import create_react_agent
 from graph.nodes.analysis.frameworks import get_framework_instructions
 from graph.tools.qualitative_tools import search_context, tavily_gap_search
-from graph.tools.common_tools import think
 
 # To restrict the agent from overusing Tavily, we'll wrap tavily_gap_search 
 # with state management or rely on system prompt instructions and LLM discipline.
@@ -36,14 +35,18 @@ Your purpose is to interpret research evidence using established business framew
 You must strictly follow the methodologies outlined below to conduct your analysis.
 {framework_instructions}
 
-## MANDATORY THINKING STEP (CRITICAL):
-- You MUST invoke the `think` tool as your VERY FIRST step to outline your strategy before calling any other tool.
-- You MUST invoke the `think` tool after receiving results from any tool, to reflect on your progress.
-- Never blindly call tools without thinking first.
+
+## CRITICAL TOOL USAGE RULE
+When invoking a tool, you MUST provide only the exact tool name in the tool name field. DO NOT include your JSON arguments inside the tool name!
+- **CORRECT Tool Name**: `search_context`
+- **INCORRECT Tool Name**: `search_context {{"query": "Apple strategy"}}`
+If you put JSON in the tool name, the API will immediately crash and your task will fail.
 
 ## Workflow (follow this order strictly):
-1. **Generate Queries**: Review the Evidence Checklist for your framework(s). Generate specific search queries based on what you need to fulfill the checklist.
-2. **Search Context**: Use the `search_context` tool to retrieve unstructured evidence from the Knowledge Manager (pgVector). **ANTI-LOOPING RULE**: You are limited to a maximum of 3 calls to `search_context`. If you do not find what you need, or if you receive identical/irrelevant results, you MUST stop searching and move to the next step. Do not get stuck in a loop of slight query variations.
+1. **Generate Queries**: Review the Evidence Checklist for your framework(s). Generate specific search queries based on what you need to fulfill the checklist. 
+   - CRITICAL WARNING: DO NOT search for exact numerical figures (like "total revenue 2024" or "income_statement_f"). Numerical data is already calculated by the Quantitative Agent and provided in your task instructions. You must use `search_context` for UNSTRUCTURED, qualitative insights (like "strategy", "risks", "management commentary").
+2. **Search Context**: Use the `search_context` tool to retrieve unstructured evidence from the Knowledge Manager (pgVector). 
+   - **ANTI-LOOPING RULE**: You are limited to a maximum of 3 calls to `search_context`. If you do not find what you need, or if you receive identical/irrelevant results, you MUST stop searching and move to the next step. Do not get stuck in a loop of slight query variations. Do not try to extract numbers that do not exist in the unstructured text.
 3. **Evaluate**: Evaluate the retrieved evidence against your framework's checklist.
 4. **Tavily Gap Fill (Optional)**: If, and ONLY if, `search_context` fails to provide sufficient evidence for a critical checklist item, you may use `tavily_gap_search` to search the web. 
    - CRITICAL RULE: You are capped at a maximum of 2 calls to `tavily_gap_search` per execution. Do not waste them.
@@ -60,13 +63,12 @@ If you cannot find enough evidence after exhausting your search limits, generate
 
 qualitative_tools = [
     search_context,
-    tavily_gap_search,
-    think
+    tavily_gap_search
 ]
 
-from llm_utils import get_chat_groq
+from llm_utils import get_chat_groq, DEFAULT_MODEL
 
-model = get_chat_groq(model="qwen/qwen3-32b", temperature=0.1)
+model = get_chat_groq(model=DEFAULT_MODEL, temperature=0.1)
 
 async def run_qualitative_agent(state: ResearchState):
     """
@@ -74,7 +76,7 @@ async def run_qualitative_agent(state: ResearchState):
     Performs reasoning over unstructured data using business frameworks.
     """
     # Create the ReAct agent executor
-    agent_executor = create_thinking_react_agent(model, qualitative_tools)
+    agent_executor = create_react_agent(model, qualitative_tools)
     
     selected_framework = state.get("selected_framework", "SWOT")
     research_id = state.get("research_id", "")

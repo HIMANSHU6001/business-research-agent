@@ -6,9 +6,8 @@ All responses are returned in full (no truncation). The orchestrator's
 ingest_to_db middleware handles interception for fundamental_data tools.
 
 Tool groups per TRD §7.7.1:
-  fundamental_data (8):  COMPANY_OVERVIEW, INCOME_STATEMENT, BALANCE_SHEET,
-                         CASH_FLOW, EARNINGS, EARNINGS_CALENDAR, LISTING_STATUS,
-                         IPO_CALENDAR
+  fundamental_data (7):  COMPANY_OVERVIEW, INCOME_STATEMENT, BALANCE_SHEET,
+                         CASH_FLOW, EARNINGS, EARNINGS_CALENDAR, IPO_CALENDAR
   alpha_intelligence (7): NEWS_SENTIMENT, EARNINGS_CALL_TRANSCRIPT,
                           TOP_GAINERS_LOSERS, INSIDER_TRANSACTIONS,
                           INSTITUTIONAL_HOLDINGS, ANALYTICS_FIXED_WINDOW,
@@ -197,25 +196,6 @@ def earnings_calendar(symbol: str = None, horizon: str = "3month") -> dict | str
         params["symbol"] = symbol
     return _make_api_request("EARNINGS_CALENDAR", params)
 
-
-@mcp.tool()
-def listing_status(date: str = None, state: str = "active") -> dict | str:
-    """Returns a list of active or delisted US stocks and ETFs.
-
-    Can return data as of the latest trading day or at a specific time in history.
-    Facilitates equity research on asset lifecycle and survivorship.
-
-    Args:
-        date: If no date is set, returns symbols as of the latest trading day.
-            If set, returns symbols on that date in history. Any YYYY-MM-DD date
-            later than 2010-01-01 is supported. For example: date=2013-08-03.
-        state: By default, state=active returns actively traded stocks and ETFs.
-            Set state=delisted to query delisted assets.
-    """
-    params = {"state": state}
-    if date:
-        params["date"] = date
-    return _make_api_request("LISTING_STATUS", params)
 
 
 @mcp.tool()

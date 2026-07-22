@@ -37,7 +37,7 @@ async def main():
     await earnings.ainvoke({"symbol": symbol}, config=config)
     print(await get_schema.ainvoke({"artifact_ids": [f"earnings_{symbol.lower()}"]}))
 
-    from graph.tools.financial_tools import earnings_calendar, ipo_calendar, listing_status
+    from graph.tools.financial_tools import earnings_calendar, ipo_calendar
     print("\n[FINANCIAL] Testing earnings_calendar...")
     await earnings_calendar.ainvoke({"horizon": "3month"}, config=config)
     print(await get_schema.ainvoke({"artifact_ids": ["earnings_calendar"]}))
@@ -46,9 +46,6 @@ async def main():
     await ipo_calendar.ainvoke({}, config=config)
     print(await get_schema.ainvoke({"artifact_ids": ["ipo_calendar"]}))
 
-    print("\n[FINANCIAL] Testing listing_status...")
-    await listing_status.ainvoke({"state": "active"}, config=config)
-    print(await get_schema.ainvoke({"artifact_ids": ["listing_status_active"]}))
 
 
     # --- 2. Macro Artifacts ---

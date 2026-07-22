@@ -3,23 +3,57 @@ import pandas as pd
 import numpy as np
 import scipy.stats as stats
 import statsmodels.api as sm
-import statsmodels.api as sm
+import duckdb
+import sys
+import os
+import re
+import json
+import shutil
+import tempfile
+import contextlib
+import io
+import traceback
+from pathlib import Path
+
+# Save the original read_parquet to avoid recursion
+_original_read_parquet = pd.read_parquet
 
 def safe_read_parquet(path: str):
-    """Safely reads a parquet file by bypassing pyarrow mmap, with retries for Windows WSL2 locks."""
-    import io
+    """Safely reads a parquet file by copying it to /tmp to bypass Docker Windows virtiofs mmap locks."""
     import time
+    import os
+    import shutil
+    import tempfile
     
     max_retries = 5
     for attempt in range(max_retries):
         try:
-            with open(path, 'rb') as f:
-                data = f.read()
-            return pd.read_parquet(io.BytesIO(data))
+            # Force cache invalidation
+            try:
+                os.listdir(os.path.dirname(path))
+                os.stat(path)
+            except Exception:
+                pass
+                
+            # Copy to a temporary file in the container's native filesystem
+            fd, tmp_path = tempfile.mkstemp(suffix=".parquet")
+            os.close(fd)
+            shutil.copy2(path, tmp_path)
+            
+            # Read from the local tmp copy using the original pandas function
+            df = _original_read_parquet(tmp_path)
+            
+            # Clean up
+            os.remove(tmp_path)
+            return df
+            
         except (IOError, OSError, PermissionError) as e:
             if attempt == max_retries - 1:
                 raise e
-            time.sleep(0.5)
+            time.sleep(1.0)
+
+# Patch pandas to use the safe reader to bypass virtiofs mmap issues on Windows
+pd.read_parquet = safe_read_parquet
 
 mcp = FastMCP("analytics")
 
@@ -33,187 +67,100 @@ def get_sample_data(parquet_path: str, n: int = 4) -> str:
     except Exception as e:
         return f"Error reading sample data: {str(e)}"
 
-@mcp.tool()
-def get_descriptive_stats(parquet_path: str, column_name: str, query_filter: str = "") -> str:
-    """Calculate basic summary statistics for a column in a parquet file."""
-    try:
-        df = safe_read_parquet(parquet_path)
-        if query_filter:
-            try:
-                df = df.query(query_filter)
-            except Exception as q_e:
-                return f"Error evaluating query_filter '{query_filter}'. Ensure it is a valid Pandas query string. Details: {str(q_e)}"
-        
-        if column_name not in df.columns:
-            return f"Error: Column '{column_name}' not found. Available columns: {list(df.columns)}"
-        
-        # Coerce to numeric in case it was stored as string
-        series = pd.to_numeric(df[column_name], errors='coerce').dropna()
-        if series.empty:
-            return f"Error: Column '{column_name}' contains no valid numeric data."
-            
-        summary = {
-            "count": int(series.count()),
-            "mean": float(series.mean()),
-            "std": float(series.std()) if series.count() > 1 else 0.0,
-            "min": float(series.min()),
-            "max": float(series.max()),
-            "median": float(series.median())
-        }
-        return f"Summary statistics for {column_name}: {summary}"
-    except Exception as e:
-        return f"Error calculating statistics: {str(e)}"
-
-@mcp.tool()
-def calculate_correlation(table_x: str, col_x: str, table_y: str, col_y: str, join_key: str, query_filter: str = "") -> str:
-    """Computes statistical relationship between two numeric series, optionally across two tables joined on a key."""
-    try:
-        df_x = safe_read_parquet(table_x)
-        if table_x != table_y:
-            df_y = safe_read_parquet(table_y)
-            if query_filter:
-                try:
-                    df_x = df_x.query(query_filter)
-                    df_y = df_y.query(query_filter)
-                except Exception as q_e:
-                    return f"Error evaluating query_filter '{query_filter}'. Ensure it is a valid Pandas query string. Details: {str(q_e)}"
-                    
-            if join_key not in df_x.columns: return f"Error: join_key '{join_key}' not in table_x. Available: {list(df_x.columns)}"
-            if join_key not in df_y.columns: return f"Error: join_key '{join_key}' not in table_y. Available: {list(df_y.columns)}"
-            merged = pd.merge(df_x, df_y, on=join_key, how="inner", suffixes=('_x', '_y'))
-            # Resolve column names after merge
-            actual_col_x = col_x + '_x' if col_x in df_y.columns and col_x == col_y else col_x
-            actual_col_y = col_y + '_y' if col_y in df_x.columns and col_x == col_y else col_y
-        else:
-            if query_filter:
-                try:
-                    df_x = df_x.query(query_filter)
-                except Exception as q_e:
-                    return f"Error evaluating query_filter '{query_filter}'. Ensure it is a valid Pandas query string. Details: {str(q_e)}"
-            merged = df_x
-            actual_col_x = col_x
-            actual_col_y = col_y
-
-        if actual_col_x not in merged.columns: return f"Error: col_x '{actual_col_x}' not in table. Available: {list(merged.columns)}"
-        if actual_col_y not in merged.columns: return f"Error: col_y '{actual_col_y}' not in table. Available: {list(merged.columns)}"
-
-        merged[actual_col_x] = pd.to_numeric(merged[actual_col_x], errors='coerce')
-        merged[actual_col_y] = pd.to_numeric(merged[actual_col_y], errors='coerce')
-        merged = merged[[actual_col_x, actual_col_y]].dropna()
-
-        if len(merged) < 3:
-            return "Error: Not enough overlapping non-null data points to calculate correlation (minimum 3 required)."
-
-        pearson_corr, pearson_p = stats.pearsonr(merged[actual_col_x], merged[actual_col_y])
-        spearman_corr, spearman_p = stats.spearmanr(merged[actual_col_x], merged[actual_col_y])
-        
-        # Check for spurious correlation (both series strongly trending)
-        n = len(merged)
-        idx = np.arange(n)
-        slope_x, _, _, _, _ = stats.linregress(idx, merged[actual_col_x])
-        slope_y, _, _, _, _ = stats.linregress(idx, merged[actual_col_y])
-        
-        # Normalize slopes to assess trend magnitude relative to std
-        std_x, std_y = merged[actual_col_x].std(), merged[actual_col_y].std()
-        trend_warning = ""
-        if std_x > 0 and std_y > 0:
-            norm_slope_x = abs(slope_x * n / std_x)
-            norm_slope_y = abs(slope_y * n / std_y)
-            if norm_slope_x > 1.5 and norm_slope_y > 1.5:
-                trend_warning = (
-                    "\nCAVEAT: Both series exhibit a strong trend over the joined index. "
-                    "The high correlation may be spurious (driven by the shared trend rather than a structural relationship). "
-                    "Consider detrending before drawing causal conclusions."
-                )
-
-        return (
-            f"Correlation between {col_x} and {col_y} (n={len(merged)}):\n"
-            f"- Pearson: {pearson_corr:.4f} (p-value: {pearson_p:.4e})\n"
-            f"- Spearman: {spearman_corr:.4f} (p-value: {spearman_p:.4e}){trend_warning}"
-        )
-    except Exception as e:
-        return f"Error calculating correlation: {str(e)}"
-
-@mcp.tool()
-def execute_t_test(table: str, target_col: str, split_col: str, group_a_condition: str, group_b_condition: str) -> str:
-    """Determines whether there is a statistically significant difference between means of two groups."""
-    try:
-        df = safe_read_parquet(table)
-        if target_col not in df.columns: return f"Error: target_col '{target_col}' not found. Available: {list(df.columns)}"
-        if split_col not in df.columns: return f"Error: split_col '{split_col}' not found. Available: {list(df.columns)}"
-
-        df[target_col] = pd.to_numeric(df[target_col], errors='coerce')
-
-        # Simple string-based query evaluation (safe via pandas .query())
+def _safe_rewrite_sql_paths(sql_query: str) -> tuple[str, list[str]]:
+    """Copy parquet files referenced in read_parquet() from virtiofs to /tmp and rewrite SQL paths.
+    
+    Returns the rewritten SQL and a list of tmp file paths to clean up.
+    """
+    tmp_files = []
+    
+    def _replace_match(match):
+        original_path = match.group(1)
+        # Only rewrite paths on the shared volume
+        if not original_path.startswith("/shared/"):
+            return match.group(0)
         try:
-            group_a = df.query(f"{split_col} {group_a_condition}")[target_col].dropna()
-            group_b = df.query(f"{split_col} {group_b_condition}")[target_col].dropna()
-        except Exception as q_e:
-            return f"Error evaluating conditions. Ensure they are valid Pandas query strings (e.g. '== 1', '> 2020'). Details: {str(q_e)}"
+            fd, tmp_path = tempfile.mkstemp(suffix=".parquet")
+            os.close(fd)
+            shutil.copy2(original_path, tmp_path)
+            tmp_files.append(tmp_path)
+            return f"read_parquet('{tmp_path}')"
+        except (IOError, OSError):
+            # If copy fails, leave the original path (DuckDB will report the error)
+            return match.group(0)
+    
+    rewritten_sql = re.sub(r"read_parquet\(['\"]([^'\"]+)['\"]\)", _replace_match, sql_query)
+    return rewritten_sql, tmp_files
 
-        if len(group_a) < 2 or len(group_b) < 2:
-            return f"Error: Insufficient data. Group A has {len(group_a)} obs; Group B has {len(group_b)} obs."
-
-        # Welch's t-test
-        t_stat, p_value = stats.ttest_ind(group_a, group_b, equal_var=False)
-        
-        caveat = ""
-        # Basic heuristic to check if split_col might be a date/year
-        if pd.api.types.is_datetime64_any_dtype(df[split_col]) or 'year' in split_col.lower() or 'date' in split_col.lower():
-            caveat = (
-                "\nCAVEAT: The split column appears to represent time/dates. "
-                "Adjacent observations in time-series data are often not independent. "
-                "The reported p-value assumes independence and may read as overly confident."
-            )
-
-        return (
-            f"Welch's t-test for {target_col} split by {split_col}:\n"
-            f"Group A ({group_a_condition}): n={len(group_a)}, mean={group_a.mean():.4f}\n"
-            f"Group B ({group_b_condition}): n={len(group_b)}, mean={group_b.mean():.4f}\n"
-            f"T-statistic: {t_stat:.4f}, p-value: {p_value:.4e}{caveat}"
-        )
-    except Exception as e:
-        return f"Error executing t-test: {str(e)}"
 
 @mcp.tool()
-def calculate_trendline(table: str, target_col: str, date_col: str, rolling_window: int, query_filter: str = "") -> str:
-    """Computes a moving average and fits an OLS linear model over a temporal index."""
+def run_duckdb_query(sql_query: str) -> str:
+    """Executes a raw SQL query against DuckDB. Parquet files can be read using: SELECT * FROM read_parquet('file_path')."""
+    tmp_files = []
     try:
-        df = safe_read_parquet(table)
-        if query_filter:
-            try:
-                df = df.query(query_filter)
-            except Exception as q_e:
-                return f"Error evaluating query_filter '{query_filter}'. Ensure it is a valid Pandas query string. Details: {str(q_e)}"
+        # Rewrite parquet paths to local /tmp copies to bypass virtiofs mmap issues
+        rewritten_sql, tmp_files = _safe_rewrite_sql_paths(sql_query)
         
-        if target_col not in df.columns: return f"Error: '{target_col}' not found. Available: {list(df.columns)}"
-        if date_col not in df.columns: return f"Error: '{date_col}' not found. Available: {list(df.columns)}"
-
-        df[target_col] = pd.to_numeric(df[target_col], errors='coerce')
-        df = df.sort_values(by=date_col).dropna(subset=[target_col])
-        if len(df) < 3: return "Error: Insufficient data points for OLS trendline."
-
-        # Compute rolling mean if requested
-        rolling_series = df[target_col]
-        if rolling_window > 1:
-            rolling_series = df[target_col].rolling(window=rolling_window, min_periods=1).mean()
-
-        # OLS requires numeric independent variable; we'll use sequential integer index (time proxy)
-        X = np.arange(len(df))
-        X = sm.add_constant(X)
-        y = rolling_series.values
-
-        model = sm.OLS(y, X).fit()
-        slope = model.params[1]
-        r_squared = model.rsquared
-
-        return (
-            f"OLS Trendline for {target_col} over {date_col} (n={len(df)}, rolling_window={rolling_window}):\n"
-            f"- Slope (change per period): {slope:.4e}\n"
-            f"- R-squared: {r_squared:.4f}\n"
-            f"- P-value (slope != 0): {model.pvalues[1]:.4e}"
-        )
+        # Create an in-memory DuckDB connection
+        con = duckdb.connect(database=':memory:')
+        
+        # Execute the query and fetch the result as a pandas DataFrame
+        df = con.execute(rewritten_sql).df()
+        
+        # Convert the DataFrame to JSON for the LLM
+        result_json = df.to_json(orient="records", date_format="iso")
+        
+        return f"Query executed successfully.\nResult:\n{result_json}"
     except Exception as e:
-        return f"Error calculating trendline: {str(e)}"
+        return f"Error executing DuckDB query: {str(e)}\n\nQuery was:\n{sql_query}"
+    finally:
+        # Clean up temporary files
+        for f in tmp_files:
+            try:
+                os.remove(f)
+            except OSError:
+                pass
+
+@mcp.tool()
+def execute_python_code(script: str) -> str:
+    """Executes an arbitrary Python script in a secure sandbox.
+    You must use print() to output your final results, as only stdout is returned.
+    Available libraries: pandas (pd), numpy (np), scipy.stats, statsmodels.api (sm), json.
+    File paths must use the exact 'file_path' string returned by read_catalog.
+    """
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    
+    # Define a clean environment with safe builtins and standard analytics libraries
+    env = {
+        "pd": pd,
+        "np": np,
+        "stats": stats,
+        "sm": sm,
+        "os": os,
+        "json": json,
+        "Path": Path,
+        "safe_read_parquet": safe_read_parquet,
+        "__builtins__": __builtins__
+    }
+    
+    try:
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            exec(script, env)
+            
+        output = stdout.getvalue()
+        errors = stderr.getvalue()
+        
+        if errors:
+            return f"Execution completed with stderr warnings/errors:\n{errors}\n\nSTDOUT:\n{output}"
+        
+        if not output.strip():
+            return "Execution completed successfully, but nothing was printed to stdout. Make sure to use print() to output your results."
+            
+        return f"Execution Output:\n{output}"
+        
+    except Exception as e:
+        error_traceback = traceback.format_exc()
+        return f"Execution failed with error:\n{error_traceback}"
 
 app = mcp.http_app(path="/sse", transport="sse")

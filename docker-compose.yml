@@ -44,7 +44,7 @@ services:
     environment:
       - DUCKDB_DATA_DIR=/shared/workspaces
     volumes:
-      - ./apps/orchestrator-api/workspaces:/shared/workspaces:ro
+      - ./apps/orchestrator-api/workspaces:/shared/workspaces
 
   mcp-financial:
     build: ./packages/mcp-financial

@@ -26,6 +26,17 @@ async def _get_and_ingest_financial_data(
 
         metadata = parsed.get("metadata", {}) if isinstance(parsed, dict) else {}
         raw_data = parsed.get("data", parsed) if isinstance(parsed, dict) else parsed
+
+        if tool_name in ["ipo_calendar", "earnings_calendar"] and isinstance(raw_data, str):
+            import pandas as pd
+            import io
+            try:
+                df = pd.read_csv(io.StringIO(raw_data))
+                if df.empty:
+                    return f"The Alpha Vantage API returned an empty dataset (0 rows) for {tool_name}. No data to ingest."
+                raw_data = df.to_dict(orient="records")
+            except Exception as e:
+                return f"Failed to parse CSV response for {tool_name}: {e}"
         
         citation_str = None
         if metadata:
@@ -148,20 +159,6 @@ async def earnings_calendar(config: RunnableConfig, symbol: Optional[str] = None
         args["symbol"] = symbol
     return await _get_and_ingest_financial_data("earnings_calendar", args, research_id, "earnings_calendar")
 
-
-@tool
-async def listing_status(config: RunnableConfig, date: Optional[str] = None, state: str = "active") -> str:
-    """Returns a list of active or delisted US stocks and ETFs.
-
-    Args:
-        date: Optional YYYY-MM-DD history snapshot date.
-        state: "active" or "delisted".
-    """
-    research_id = config.get("configurable", {}).get("research_id", "")
-    args = {"state": state}
-    if date:
-        args["date"] = date
-    return await _get_and_ingest_financial_data("listing_status", args, research_id, f"listing_status_{state}")
 
 
 @tool

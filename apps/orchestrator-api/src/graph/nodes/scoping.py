@@ -3,7 +3,7 @@ from datetime import datetime
 from typing_extensions import Literal
 from pydantic import BaseModel, Field
 
-from llm_utils import get_chat_groq
+from llm_utils import get_chat_groq, DEFAULT_MODEL
 from langchain_core.messages import HumanMessage, AIMessage, get_buffer_string
 from langchain_core.output_parsers import PydanticOutputParser
 from langgraph.graph import END
@@ -14,7 +14,7 @@ from graph.state import ResearchState
 # ===== CONFIGURATION =====
 
 # Initialize model (You can swap this to qwen if you prefer, keeping Llama-3.1 as the established baseline)
-model = get_chat_groq(model="qwen/qwen3-32b", temperature=0.1)
+model = get_chat_groq(model=DEFAULT_MODEL, temperature=0.1)
 
 def get_today_str() -> str:
     now = datetime.now()
@@ -74,12 +74,15 @@ Output only the raw JSON. Do not include markdown formatting blocks or conversat
 """
 
 BRIEF_PROMPT = """You are the Scoping Agent for a Business Research multi-agent system.
-Our system relies on three parallel capability agents: Financial (public company data), Macro Economic (country-level data), and Consumer Trends (search interest).
+Our system relies on three parallel capability agents with strict limitations:
+1. Financial Intelligence: Collects public company fundamental data (company overview, income statement, balance sheet, cash flow, earnings, IPO calendar). *NOTE: We do NOT collect daily stock prices or historical market capitalization time-series.*
+2. Macro Economic Intelligence: Collects country-level macroeconomic and industry evidence (e.g., GDP, inflation, population, trade stats) via World Bank.
+3. Consumer Trends: Collects Google Trends search interest over time and by region.
 
 Transform the conversation history into a comprehensive, formal research brief. 
 The brief MUST explicitly define:
 - Target entities (companies, countries, or trend keywords).
-- Required metrics.
+- Required metrics (CRITICAL: ONLY include metrics that our system is actually capable of collecting based on the list above. Do not request unsupported data like daily stock prices).
 - Strict temporal scope (dates or years).
 
 Then, select the single most appropriate analytical framework (SWOT, PESTEL, PORTER, THEMATIC, CONCEPTUAL) that fits the requested analysis.
@@ -93,15 +96,36 @@ Output only the raw JSON. Do not include markdown formatting blocks or conversat
 
 # ===== WORKFLOW NODES =====
 
+class ReviewBriefOutput(BaseModel):
+    decision: Literal["approve", "revise"] = Field(
+        description="Whether the user approved the research brief or requested changes."
+    )
+    feedback: str = Field(
+        description="The user's feedback if revise is chosen, or empty if approved.",
+        default=""
+    )
+
+review_parser = PydanticOutputParser(pydantic_object=ReviewBriefOutput)
+
+REVIEW_PROMPT = """You are the Scoping Agent.
+The user was just presented with a Research Brief. Evaluate their response to see if they approved it or if they want changes.
+
+Conversation History:
+{messages}
+
+{format_instructions}
+Output only the raw JSON.
+"""
+
 def clarify_with_user(state: ResearchState) -> Command[Literal["write_research_brief", "__end__"]]:
     """
     Determines if the user's request contains sufficient information.
     Routes to research brief generation or pauses execution to ask the human.
     """
-    print(f"--- SCOPING: CLARIFICATION CHECK ({state['research_id']}) ---")
+    print(f"--- SCOPING: CLARIFICATION CHECK ({state.get('research_id', '')}) ---")
     
     # 1. Budget check to prevent infinite human-in-the-loop loops
-    if len(state["messages"]) > 6:
+    if len(state.get("messages", [])) > 6:
         print("Turn budget exceeded for scoping. Forcing brief generation.")
         return Command(goto="write_research_brief")
 
@@ -128,12 +152,12 @@ def clarify_with_user(state: ResearchState) -> Command[Literal["write_research_b
             update={"messages": [AIMessage(content=response.verification, name="scoping_agent")]}
         )
 
-def write_research_brief(state: ResearchState) -> dict:
+def write_research_brief(state: ResearchState) -> Command[Literal["__end__"]]:
     """
     Transforms the conversation history into the formal TRD specifications:
     a structured research brief and a selected analytical framework.
     """
-    print(f"--- SCOPING: GENERATING BRIEF ({state['research_id']}) ---")
+    print(f"--- SCOPING: GENERATING BRIEF ({state.get('research_id', '')}) ---")
     
     structured_output_model = model.with_structured_output(ResearchScope, method="json_mode")
 
@@ -145,10 +169,46 @@ def write_research_brief(state: ResearchState) -> dict:
         ))
     ])
 
-    # Update global state and advance the phase
-    return {
-        "research_brief": response.research_brief,
-        "selected_framework": response.selected_framework,
-        "current_phase": "collection",
-        "next_agent": "data_collection_supervisor"
-    }
+    review_message = f"Here is the generated Research Brief:\n\n{response.research_brief}\n\nSelected Framework: {response.selected_framework}\n\nDo you approve this brief, or would you like to make any changes before we begin data collection?"
+
+    # Output to user and pause for review
+    return Command(
+        goto=END,
+        update={
+            "research_brief": response.research_brief,
+            "selected_framework": response.selected_framework,
+            "current_phase": "scoping_review",
+            "messages": [AIMessage(content=review_message, name="scoping_agent")]
+        }
+    )
+
+def review_research_brief(state: ResearchState) -> Command[Literal["write_research_brief", "data_collection_supervisor"]]:
+    """Evaluates the user's feedback on the research brief."""
+    print(f"--- SCOPING: REVIEW BRIEF ({state.get('research_id', '')}) ---")
+    
+    structured_output_model = model.with_structured_output(ReviewBriefOutput, method="json_mode")
+    
+    response = structured_output_model.invoke([
+        HumanMessage(content=REVIEW_PROMPT.format(
+            messages=get_buffer_string(state.get("messages", [])[-3:]), # Look at recent context
+            format_instructions=review_parser.get_format_instructions()
+        ))
+    ])
+    
+    if response.decision == "approve":
+        return Command(
+            goto="data_collection_supervisor",
+            update={
+                "current_phase": "collection",
+                "next_agent": "data_collection_supervisor",
+                "messages": [AIMessage(content="Great, starting data collection now.", name="scoping_agent")]
+            }
+        )
+    else:
+        return Command(
+            goto="write_research_brief",
+            update={
+                "current_phase": "scoping",
+                "messages": [AIMessage(content=f"Understood. I will revise the brief based on your feedback: {response.feedback}", name="scoping_agent")]
+            }
+        )

@@ -5,7 +5,7 @@ import datetime
 import asyncio
 import pandas as pd
 from sqlalchemy import text
-from llm_utils import get_chat_groq
+from llm_utils import get_chat_groq, DEFAULT_MODEL
 from langchain_core.prompts import ChatPromptTemplate
 from database import get_duckdb_conn, AsyncSessionLocal
 
@@ -13,8 +13,8 @@ async def generate_semantic_summary(artifact_id: str, sample_data_json: str, sou
     """Calls the Groq LLM to generate a 2-3 sentence semantic summary of the data."""
     try:
         llm = get_chat_groq(
-            model="qwen/qwen3-32b",
-            temperature=0.2,
+            model=DEFAULT_MODEL,
+            temperature=0.0,
             max_tokens=150,
         )
         system_prompt = "You are a helpful data cataloging assistant."
@@ -158,10 +158,8 @@ async def ingest_to_db(research_id: str, artifact_id: str, source_mcp: str, raw_
         
         df = pd.json_normalize(data_to_load)
         
-        # Convert to numeric where possible, but KEEP all columns
-        df.replace(["None", "", "N/A", "null"], pd.NA, inplace=True)
-        for col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors='ignore')
+        # We no longer force numeric coercion here because DuckDB and Python scripts
+        # executed by the autonomous agent can handle type casting on demand.
             
         # Drop columns that are completely empty/null to save schema token space
         df.dropna(axis=1, how='all', inplace=True)

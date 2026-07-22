@@ -1,7 +1,7 @@
 import json
 from typing import TypedDict
 from langchain_core.messages import SystemMessage, HumanMessage
-from llm_utils import get_chat_groq
+from llm_utils import get_chat_groq, SUPERVISOR_MODEL, DEFAULT_MODEL
 from graph.state import ResearchState
 import os
 
@@ -14,8 +14,7 @@ class AnalysisSupervisorOutput(BaseModel):
 
 from graph.tools.qualitative_tools import search_context
 from graph.tools.analytics_tools import read_catalog
-from graph.tools.common_tools import think
-from graph.nodes.collection.collection_utils import create_thinking_react_agent
+from graph.nodes.collection.collection_utils import create_react_agent
 from context.workspace import get_citations_for_research
 
 async def run_analysis_supervisor(state: ResearchState) -> dict:
@@ -26,14 +25,22 @@ async def run_analysis_supervisor(state: ResearchState) -> dict:
         reports = []
     
     agent_model = get_chat_groq(
-        model="qwen/qwen3-32b",
+        model=SUPERVISOR_MODEL,
         temperature=0.1
     )
     
-    tools = [search_context, read_catalog, think]
-    supervisor_agent = create_thinking_react_agent(agent_model, tools)
+    tools = [search_context, read_catalog]
+    supervisor_agent = create_react_agent(agent_model, tools)
     
-    completed_reports_info = f"Completed Analysis Reports: {len(reports)}\n\n"
+    # Extract the synthesized data collection report from messages
+    collection_report = "Not available."
+    for m in reversed(state.get("messages", [])):
+        if getattr(m, "name", None) == "collection_supervisor" and "Data Collection Report" in getattr(m, "content", ""):
+            collection_report = m.content
+            break
+            
+    completed_reports_info = f"Data Collection Report (Pay attention to missing data/gaps):\n{collection_report}\n\n"
+    completed_reports_info += f"Completed Analysis Reports: {len(reports)}\n\n"
     for i, report in enumerate(reports):
         completed_reports_info += f"Report {i+1}:\n{report[:3000]}...\n\n"
 
@@ -41,21 +48,19 @@ async def run_analysis_supervisor(state: ResearchState) -> dict:
 Your job is to route the analysis process.
 
 Available Agents:
-- quantitative_agent: Performs statistical computation on datasets. Route here to start or continue quantitative analysis.
-  *CAPABILITIES: Can only run `get_descriptive_stats`, `calculate_correlation`, `execute_t_test`, and `calculate_trendline`.*
-  *LIMITATIONS: Cannot perform complex math or arbitrary Pandas operations. Cannot analyze historical market capitalization time-series or daily stock prices (as that data is not collected) or collect any data.*
+- quantitative_agent: An autonomous data scientist that can run Python and SQL. Route here to compute statistics, join mismatched data, and run correlation or t-tests.
+  *CAPABILITIES: Has a fully sandboxed Python REPL and DuckDB SQL engine. Can calculate p-values, run regressions, clean data, extract years from dates, etc.*
 - qualitative_agent: Interprets evidence using the selected framework. Route here when quantitative analysis is complete.
 - analysis_synthesizer: Synthesizes the final report. Route here when both are done.
 
 # CRITICAL RULES:
-1. ONE TASK AT A TIME: In `agent_task`, specify exactly ONE abstract metric you want analyzed (e.g. "revenue" or "net income") and the EXACT statistical tool to use (e.g. `get_descriptive_stats`). 
-   *DO NOT GUESS EXACT COLUMN NAMES.* Instruct the `quantitative_agent` to find the dataset via `read_catalog`, check the schema via `get_schema`, and then apply the statistical tool to the appropriately matching column.
+1. ONE TASK AT A TIME: In `agent_task`, specify exactly ONE abstract metric you want analyzed (e.g. "revenue" or "net income"). Do not tell the agent exactly what code to write, but do tell it what statistical output you want (e.g., "Extract the year, join it to the GDP dataset, and find the correlation coefficient and p-value").
 2. DO NOT BUNDLE: Never ask the agent to analyze multiple variables or do multiple tests in one task.
-3. NO TOOL CALLS: DO NOT attempt to output tool calls for agents (e.g. `quantitative_agent`). Just state your routing decision in plain text.
+3. MISSING DATA: Review the Data Collection Report carefully. If a dataset or metric is explicitly listed as "Not available" or a "Gap / Error", DO NOT ask the quantitative_agent to analyze it.
+4. CRITICAL - NO TOOL CALLS: `quantitative_agent`, `qualitative_agent`, and `analysis_synthesizer` are NOT tools. DO NOT generate a function call or tool call for them. Doing so will crash the system with 'tool call validation failed'. You MUST only state your routing decision in plain text.
+5. DO NOT ASSIGN STATISTICAL TOOLS TO QUALITATIVE AGENT: Only the quantitative_agent can run math.
 
-5. DO NOT ASSIGN STATISTICAL TOOLS TO QUALITATIVE AGENT: Only the quantitative_agent can run correlation, t-tests, etc.
-
-In your final response, you MUST provide a brief summary of reasoning, the next agent, and the EXACT task instruction. If routing to quantitative_agent, be highly specific (metric + tool).
+In your final response, you MUST provide a brief summary of reasoning, the next agent, and the EXACT task instruction.
 """
 
     user_prompt = f"""
@@ -83,29 +88,53 @@ If BOTH quantitative and qualitative analyses have been adequately addressed (e.
     response = await supervisor_agent.ainvoke(inputs, config=config)
     agent_final_text = response["messages"][-1].content
 
-    struct_model = get_chat_groq(
-        model="qwen/qwen3-32b",
+    base_model = get_chat_groq(
+        model=SUPERVISOR_MODEL,
         temperature=0.0
-    ).with_structured_output(AnalysisSupervisorOutput)
+    )
+    from langchain_core.output_parsers import PydanticOutputParser
+    parser = PydanticOutputParser(pydantic_object=AnalysisSupervisorOutput)
     
     extraction_prompt = f"""Extract the routing decision from the supervisor's output.
 CRITICAL RULES for agent_task:
-- If next_agent is 'quantitative_agent': The task MUST specify exactly ONE abstract metric (e.g. 'revenue') and the EXACT statistical tool to use (e.g. `get_descriptive_stats`). Do not use vague summaries like 'apply statistical tools'. Be highly specific.
+- If next_agent is 'quantitative_agent': The task MUST specify exactly ONE abstract metric (e.g. 'revenue') and explain what statistical outcome you want (e.g., 'Extract the year, join it to the GDP dataset, and find the correlation coefficient and p-value'). Do not use vague summaries.
 - If next_agent is 'qualitative_agent': The task MUST outline what thematic or framework-based interpretation to do. DO NOT assign statistical correlation or math tasks to the qualitative agent.
 - If next_agent is 'analysis_synthesizer': The task should just be to synthesize the reports.
 
 Supervisor Output:
 {agent_final_text}
+
+{parser.get_format_instructions()}
 """
     
-    decision_obj = struct_model.invoke(extraction_prompt)
-    
+    try:
+        response = await base_model.ainvoke(extraction_prompt)
+        decision_obj = parser.parse(response.content)
+    except Exception as e:
+        print(f"Failed to parse structured output, falling back. Error: {e}")
+        # Fallback dictionary if JSON parsing fails
+        decision_obj = AnalysisSupervisorOutput(
+            reasoning="Failed to parse structured output.",
+            next_agent="analysis_synthesizer",
+            agent_task="Synthesize reports."
+        )
+        
     if hasattr(decision_obj, "model_dump"):
         decision = decision_obj.model_dump()
     elif hasattr(decision_obj, "dict"):
         decision = decision_obj.dict()
     else:
         decision = decision_obj
+        
+    quant_count = sum(1 for r in reports if "Quantitative Findings" in r)
+    qual_count = sum(1 for r in reports if "Qualitative Findings" in r)
+    
+    if decision["next_agent"] == "quantitative_agent" and quant_count >= 2:
+        print("  [CAP ENFORCED] quantitative_agent called 2 times already. Forcing analysis_synthesizer.")
+        decision["next_agent"] = "analysis_synthesizer"
+    elif decision["next_agent"] == "qualitative_agent" and qual_count >= 2:
+        print("  [CAP ENFORCED] qualitative_agent called 2 times already. Forcing analysis_synthesizer.")
+        decision["next_agent"] = "analysis_synthesizer"
         
     print(f"Supervisor Decision: {decision['next_agent']}")
     print(f"Task: {decision['agent_task']}")
@@ -127,7 +156,7 @@ async def run_analysis_synthesizer(state: ResearchState) -> dict:
     citations_list = await get_citations_for_research(research_id)
     
     llm = get_chat_groq(
-        model="qwen/qwen3-32b",
+        model=DEFAULT_MODEL,
         temperature=0.2
     )
     

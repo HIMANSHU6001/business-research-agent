@@ -1,38 +1,37 @@
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
-from llm_utils import get_chat_groq
+from llm_utils import get_chat_groq, DEFAULT_MODEL
 from graph.state import ResearchState
 from graph.tools.trends_tools import (
     interest_by_region,
     interest_over_time,
 )
-from graph.tools.common_tools import think
 from graph.tools.analytics_tools import read_catalog
-from graph.nodes.collection.collection_utils import create_thinking_react_agent
+from graph.nodes.collection.collection_utils import create_react_agent
 
-model = get_chat_groq(model="qwen/qwen3-32b", temperature=0.1)
+model = get_chat_groq(model=DEFAULT_MODEL, temperature=0.1)
 
 TRENDS_SYSTEM_PROMPT = """You are the Trends Intelligence Agent. Collect Google Trends data via SerpApi. Do NOT analyze.
 
 CRITICAL RULES & WORKFLOW:
-1. ALWAYS use the `think` tool before and after any other tool call to outline strategy and reflect. Keep reflections concise.
-2. BEFORE fetching data, ALWAYS use `read_catalog` to check if the data already exists in the database. DO NOT fetch the same data twice.
+1. BEFORE fetching data, ALWAYS use `read_catalog` to check if the data already exists in the database. DO NOT fetch the same data twice.
 3. Identify key topics from the task.
 3. Use `interest_over_time` and `interest_by_region` to collect trend data. They return confirmation strings.
 4. NEVER hallucinate data or tool arguments.
 5. Do NOT re-call tools to verify artifact IDs. Stop when you have enough data.
+6. STRICT DATE FORMATTING: If passing a date range to tools, you MUST use either the predefined keywords (e.g. "today 12-m", "all") or exact "YYYY-MM-DD YYYY-MM-DD" format. Do NOT use textual dates like "July 2024 to July 2026".
+7. MISSING DATA HANDLING: If a tool returns an empty result, or an error message indicating no data is available for the requested trend/keyword, this means the required data is NOT available. You MUST explicitly state in your report exactly which keyword/region was missing (e.g. "The requested search trends data for 'Reliance' in India is not available") and do not attempt to fetch it again.
 
 OUTPUT:
-Write a concise report listing collected trend data, Artifact IDs, and any gaps or errors.
+Write a concise report listing collected trend data, Artifact IDs, and any gaps or errors. If data was missing or unavailable, explicitly state exactly which data is not available.
 """
 
 trends_tools = [
     interest_by_region,
     interest_over_time,
-    read_catalog,
-    think,
+    read_catalog
 ]
 
-trends_agent_executor = create_thinking_react_agent(model, trends_tools)
+trends_agent_executor = create_react_agent(model, trends_tools)
 
 async def run_trends_agent(state: ResearchState) -> dict:
     """Collects consumer demand and search trend evidence via Google Trends MCP."""
