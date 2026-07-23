@@ -7,15 +7,18 @@ import { MessageInput } from "./message-input";
 import { InterruptCard } from "./interrupt-card";
 import { ProgressTracker } from "./progress-tracker";
 import { ErrorDisplay } from "./error-display";
+import { ArtifactPanel } from "./artifact-panel";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { RotateCcw, Loader2, FileText, Copy, Check, Zap } from "lucide-react";
+import { RotateCcw, Loader2, FileText, Copy, Check, Hexagon, Database, Download, Pause, Play } from "lucide-react";
 
 interface ChatContainerProps {
   state: ResearchState;
   onRespond: (message: string) => void;
   onRetry: () => void;
   onNewResearch: () => void;
+  onPause?: () => void;
+  onResume?: () => void;
 }
 
 export function ChatContainer({
@@ -23,9 +26,12 @@ export function ChatContainer({
   onRespond,
   onRetry,
   onNewResearch,
+  onPause,
+  onResume,
 }: ChatContainerProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const [isArtifactPanelOpen, setIsArtifactPanelOpen] = useState(false);
 
   // Auto-scroll to bottom on new messages
   useEffect(() => {
@@ -42,25 +48,25 @@ export function ChatContainer({
   const inputPlaceholder = isWaitingForInput
     ? "Type your response..."
     : state.isStreaming
-    ? "Waiting for agent response..."
-    : state.phase === "complete"
-    ? "Research complete"
-    : "Type your message...";
+      ? "Waiting for agent response..."
+      : state.phase === "complete"
+        ? "Research complete"
+        : "Type your message...";
 
   return (
     <div className="flex flex-col h-full bg-background relative overflow-hidden">
       {/* Background gradients for chat */}
-      <div className="absolute top-0 left-0 w-full h-32 bg-gradient-to-b from-[hsl(217,91%,60%,0.03)] to-transparent pointer-events-none" />
-      
+      <div className="absolute top-0 left-0 w-full h-32 bg-gradient-to-b from-[hsl(262,83%,58%,0.03)] to-transparent pointer-events-none" />
+
       {/* Header */}
       <header className="relative z-10 glass border-b border-border/50 px-6 py-4 flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-[hsl(217,91%,60%)] to-[hsl(250,80%,65%)] flex items-center justify-center shadow-[0_2px_8px_hsl(217,91%,60%,0.2)]">
-            <Zap className="w-4 h-4 text-white" />
+          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-[hsl(262,83%,58%)] to-[hsl(280,80%,65%)] flex items-center justify-center shadow-[0_2px_8px_hsl(262,83%,58%,0.2)]">
+            <Hexagon className="w-4 h-4 text-white" />
           </div>
           <div>
             <h1 className="text-sm font-semibold text-foreground tracking-tight">
-              Business Research Agent
+              Atlas Research
             </h1>
             {state.researchId && (
               <span className="text-[10px] text-muted-foreground font-mono flex items-center gap-1 mt-0.5">
@@ -69,17 +75,46 @@ export function ChatContainer({
             )}
           </div>
         </div>
-        <button
-          onClick={onNewResearch}
-          className="flex items-center gap-2 text-xs font-medium text-muted-foreground hover:text-foreground bg-secondary/50 hover:bg-secondary px-3 py-1.5 rounded-full transition-colors border border-border/50"
-        >
-          <RotateCcw className="w-3 h-3" />
-          New Research
-        </button>
+        <div className="flex items-center gap-2">
+          {state.researchId && (
+            <button
+              onClick={() => setIsArtifactPanelOpen(true)}
+              className="flex items-center gap-2 text-xs font-medium text-muted-foreground hover:text-foreground bg-secondary/50 hover:bg-secondary px-3 py-1.5 rounded-full transition-colors border border-border/50"
+            >
+              <Database className="w-3 h-3" />
+              Artifacts
+            </button>
+          )}
+          {state.isStreaming && onPause && (
+            <button
+              onClick={onPause}
+              className="flex items-center gap-2 text-xs font-medium text-amber-500 hover:text-amber-400 bg-amber-500/10 hover:bg-amber-500/20 px-3 py-1.5 rounded-full transition-colors border border-amber-500/20"
+            >
+              <Pause className="w-3 h-3" />
+              Pause
+            </button>
+          )}
+          {!state.isStreaming && state.phase !== "complete" && state.phase !== "error" && !state.pendingInterrupt && onResume && (
+            <button
+              onClick={onResume}
+              className="flex items-center gap-2 text-xs font-medium text-green-500 hover:text-green-400 bg-green-500/10 hover:bg-green-500/20 px-3 py-1.5 rounded-full transition-colors border border-green-500/20"
+            >
+              <Play className="w-3 h-3" />
+              Resume
+            </button>
+          )}
+          <button
+            onClick={onNewResearch}
+            className="flex items-center gap-2 text-xs font-medium text-muted-foreground hover:text-foreground bg-secondary/50 hover:bg-secondary px-3 py-1.5 rounded-full transition-colors border border-border/50"
+          >
+            <RotateCcw className="w-3 h-3" />
+            New Research
+          </button>
+        </div>
       </header>
 
       {/* Progress Tracker */}
-      <ProgressTracker phase={state.phase} activeNode={state.activeNode} />
+      <ProgressTracker phase={state.phase} activeNode={state.activeNode} currentTask={state.currentTask} />
 
       {/* Messages */}
       <div
@@ -88,10 +123,10 @@ export function ChatContainer({
       >
         <div className="max-w-4xl mx-auto space-y-6">
           {state.messages.map((msg, idx) => (
-            <MessageBubble 
-              key={msg.id} 
-              message={msg} 
-              isLatest={idx === state.messages.length - 1 && !state.isStreaming && !state.pendingInterrupt} 
+            <MessageBubble
+              key={msg.id}
+              message={msg}
+              isLatest={idx === state.messages.length - 1 && !state.isStreaming && !state.pendingInterrupt}
             />
           ))}
 
@@ -155,6 +190,13 @@ export function ChatContainer({
           />
         </div>
       )}
+
+      {/* Artifact Panel Overlay */}
+      <ArtifactPanel
+        researchId={state.researchId}
+        isOpen={isArtifactPanelOpen}
+        onClose={() => setIsArtifactPanelOpen(false)}
+      />
     </div>
   );
 }
@@ -175,7 +217,7 @@ function FinalReportCard({ report }: { report: string }) {
   return (
     <div className="mb-6 mt-4">
       <div className="glass-strong border-t-2 border-t-[hsl(142,71%,45%)] rounded-2xl p-0 overflow-hidden shadow-[0_8px_30px_rgb(0,0,0,0.12)]">
-        
+
         {/* Header */}
         <div className="bg-secondary/30 px-6 py-4 flex items-center justify-between border-b border-border/50">
           <div className="flex items-center gap-2.5">
@@ -189,26 +231,42 @@ function FinalReportCard({ report }: { report: string }) {
               <span className="text-xs text-muted-foreground">Research completed successfully</span>
             </div>
           </div>
-          <button
-            onClick={handleCopy}
-            className={`flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg transition-all ${
-              copied 
-                ? "bg-[hsl(142,71%,45%,0.15)] text-[hsl(142,71%,45%)]" 
-                : "bg-secondary text-muted-foreground hover:text-foreground hover:bg-secondary/80"
-            }`}
-          >
-            {copied ? (
-              <>
-                <Check className="w-3.5 h-3.5" />
-                Copied
-              </>
-            ) : (
-              <>
-                <Copy className="w-3.5 h-3.5" />
-                Copy
-              </>
-            )}
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => {
+                const blob = new Blob([report], { type: "text/markdown" });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.href = url;
+                a.download = `research_report_${Date.now()}.md`;
+                a.click();
+                URL.revokeObjectURL(url);
+              }}
+              className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg transition-all bg-secondary text-muted-foreground hover:text-foreground hover:bg-secondary/80"
+            >
+              <Download className="w-3.5 h-3.5" />
+              Markdown
+            </button>
+            <button
+              onClick={handleCopy}
+              className={`flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg transition-all ${copied
+                  ? "bg-[hsl(142,71%,45%,0.15)] text-[hsl(142,71%,45%)]"
+                  : "bg-secondary text-muted-foreground hover:text-foreground hover:bg-secondary/80"
+                }`}
+            >
+              {copied ? (
+                <>
+                  <Check className="w-3.5 h-3.5" />
+                  Copied
+                </>
+              ) : (
+                <>
+                  <Copy className="w-3.5 h-3.5" />
+                  Copy
+                </>
+              )}
+            </button>
+          </div>
         </div>
 
         {/* Content */}

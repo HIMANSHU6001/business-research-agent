@@ -1,5 +1,5 @@
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
-from llm_utils import get_chat_groq, DEFAULT_MODEL
+from llm_utils import get_chat_model, DEFAULT_MODEL
 from graph.state import ResearchState
 from graph.tools.trends_tools import (
     interest_by_region,
@@ -8,7 +8,7 @@ from graph.tools.trends_tools import (
 from graph.tools.analytics_tools import read_catalog
 from graph.nodes.collection.collection_utils import create_react_agent
 
-model = get_chat_groq(model=DEFAULT_MODEL, temperature=0.1)
+model = get_chat_model(model=DEFAULT_MODEL, temperature=0.1)
 
 TRENDS_SYSTEM_PROMPT = """You are the Trends Intelligence Agent. Collect Google Trends data via SerpApi. Do NOT analyze.
 

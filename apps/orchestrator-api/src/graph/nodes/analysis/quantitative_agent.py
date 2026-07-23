@@ -1,5 +1,5 @@
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
-from llm_utils import get_chat_groq, QUANTITATIVE_MODEL
+from llm_utils import get_chat_model, QUANTITATIVE_MODEL
 from graph.state import ResearchState
 from graph.tools.analytics_tools import (
     read_catalog,
@@ -10,7 +10,7 @@ from graph.tools.analytics_tools import (
 )
 from graph.nodes.collection.collection_utils import create_react_agent
 
-model = get_chat_groq(model=QUANTITATIVE_MODEL, temperature=0.1)
+model = get_chat_model(model=QUANTITATIVE_MODEL, temperature=0.1)
 
 QUANTITATIVE_SYSTEM_PROMPT = """You are the Quantitative Analysis Agent.
 You execute precise data manipulation and statistical tools on collected data. 

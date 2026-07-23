@@ -44,11 +44,20 @@ function detectInterruptType(values: Record<string, any>): SSEInterruptEvent {
   for (let i = messages.length - 1; i >= 0; i--) {
     const msg = messages[i];
     const type = msg.type || (msg.role === "assistant" ? "ai" : "");
+
+    // Skip human messages
+    if (type === "human" || msg.name === "human" || msg.role === "user") {
+      continue;
+    }
+
     if (type === "ai" || msg.name) {
-      lastAiContent =
+      const content =
         typeof msg.content === "string"
           ? msg.content
           : JSON.stringify(msg.content ?? "");
+      // We now pass supervisor reflections to the frontend
+      // so it can render them as expandable thoughts.
+      lastAiContent = content;
       lastAiName = msg.name || "";
       break;
     }
@@ -82,6 +91,21 @@ async function checkAndEmitThreadState(
   onEvent: (event: SSEEvent) => void
 ): Promise<void> {
   const state = await client.threads.getState(threadId);
+  
+  // Check if the graph stopped due to an error in any task
+  if (state.tasks && state.tasks.length > 0) {
+    const failedTask = state.tasks.find((t: any) => t.error);
+    if (failedTask) {
+      onEvent({
+        event: "error",
+        data: {
+          message: `Error in node ${failedTask.name}: ${failedTask.error}`,
+        },
+      });
+      return;
+    }
+  }
+
   const values = (state.values as Record<string, any>) || {};
   const currentPhase = values.current_phase || "";
 
@@ -222,14 +246,92 @@ export async function respondToInterrupt(
   }
 }
 
-/**
- * Get the current state of a research thread (for page refresh/reconnection).
- */
+export async function pauseResearchApi(threadId: string): Promise<void> {
+  const client = getClient();
+  try {
+    const runs = await client.runs.list(threadId);
+    const activeRuns = runs.filter((r: any) => ["pending", "in_progress", "running"].includes(r.status));
+    for (const run of activeRuns) {
+      await client.runs.cancel(threadId, run.run_id);
+    }
+  } catch (e) {
+    console.error("Failed to pause research:", e);
+  }
+}
+
+export async function resumeResearch(
+  threadId: string,
+  onEvent: (event: SSEEvent) => void,
+  signal?: AbortSignal
+): Promise<void> {
+  const client = getClient();
+  try {
+    const allRuns = await client.runs.list(threadId);
+    const runs = allRuns.filter((r: any) => ["pending", "in_progress", "running"].includes(r.status));
+    let stream;
+    
+    if (runs && runs.length > 0) {
+      // Join the existing active run
+      stream = client.runs.joinStream(threadId, runs[0].run_id);
+    } else {
+      // Start a new run with no input to continue from current state
+      stream = client.runs.stream(
+        threadId,
+        ASSISTANT_ID,
+        {
+          input: null,
+          streamMode: ["updates"],
+        }
+      );
+    }
+
+    for await (const chunk of stream) {
+      if (signal?.aborted) break;
+      if (chunk.event === "updates" && chunk.data) {
+        for (const [nodeName, nodeData] of Object.entries(
+          chunk.data as Record<string, any>
+        )) {
+          onEvent({
+            event: "node_update",
+            data: {
+              node: nodeName,
+              data: nodeData,
+            },
+          });
+        }
+      }
+    }
+
+    if (!signal?.aborted) {
+      await checkAndEmitThreadState(client, threadId, onEvent);
+    }
+  } catch (e: any) {
+    if (signal?.aborted) return;
+    onEvent({
+      event: "error",
+      data: {
+        message: e.message || "Error resuming research graph",
+        traceback: e.stack,
+      },
+    });
+  }
+}
+
 export async function getResearchState(
   threadId: string
-): Promise<BackendStateResponse> {
+): Promise<BackendStateResponse | { error: string; traceback?: string }> {
   const client = getClient();
   const state = await client.threads.getState(threadId);
+  
+  if (state.tasks && state.tasks.length > 0) {
+    const failedTask = state.tasks.find((t: any) => t.error);
+    if (failedTask) {
+      return {
+        error: `Error in node ${failedTask.name}: ${failedTask.error}`,
+      };
+    }
+  }
+
   const values = (state.values as Record<string, any>) || {};
   const messages = (values.messages || []) as Array<any>;
 
@@ -260,4 +362,27 @@ export async function getResearchState(
     interrupt_info: interruptInfo,
     analysis_reports: values.analysis_reports || [],
   };
+}
+
+export async function fetchArtifacts(researchId: string): Promise<any[]> {
+  // Artifact endpoints are hosted on our custom FastAPI Orchestrator, not LangGraph SDK.
+  const orchestratorUrl = process.env.NEXT_PUBLIC_ORCHESTRATOR_URL || "http://localhost:8000";
+
+  const response = await fetch(`${orchestratorUrl}/research/${researchId}/artifacts`);
+  if (!response.ok) {
+    throw new Error("Failed to fetch artifacts");
+  }
+  const data = await response.json();
+  return data.artifacts || [];
+}
+
+export async function fetchArtifactData(researchId: string, artifactId: string): Promise<any> {
+  const orchestratorUrl = process.env.NEXT_PUBLIC_ORCHESTRATOR_URL || "http://localhost:8000";
+
+  const response = await fetch(`${orchestratorUrl}/research/${researchId}/artifacts/${artifactId}`);
+  if (!response.ok) {
+    throw new Error("Failed to fetch artifact data");
+  }
+  const data = await response.json();
+  return data.data;
 }

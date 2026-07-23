@@ -73,7 +73,9 @@ def create_react_agent(model, tools, parallel_tool_calls=True):
     """Creates a React agent.
     Automatically compresses message history before each LLM call to stay within token limits."""
     tool_node = ToolNode(tools)
-    bound_model = model.bind_tools(tools, parallel_tool_calls=parallel_tool_calls)
+    
+    # langchain-google-genai throws validation error for extra inputs if parallel_tool_calls is passed
+    bound_model = model.bind_tools(tools)
     
     async def agent_node(state: ReactAgentState):
         messages = compress_agent_messages(state["messages"])

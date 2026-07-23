@@ -121,6 +121,93 @@ async def ingest_artifact(request: IngestRequest, background_tasks: BackgroundTa
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/research/{research_id}/artifacts")
+async def list_artifacts(research_id: str, db: AsyncSession = Depends(get_pg_session)):
+    """Get a list of all artifacts for a research session."""
+    try:
+        try:
+            r_uuid = uuid.UUID(research_id)
+        except (ValueError, TypeError):
+            # In case the frontend sends a non-UUID string or the studio fallback was used
+            if research_id.startswith("res-"):
+                r_uuid = uuid.UUID("00000000-0000-0000-0000-000000000000")
+            else:
+                raise HTTPException(status_code=400, detail="Invalid research_id format")
+                
+        stmt = text("""
+            SELECT id, artifact_id, source_mcp, db_table_pointer, row_count, 
+                   time_range_start, time_range_end, description, status 
+            FROM semantic_catalog 
+            WHERE research_id = :research_id
+            ORDER BY created_at ASC
+        """)
+        result = await db.execute(stmt, {"research_id": r_uuid})
+        
+        artifacts = []
+        for row in result:
+            artifacts.append({
+                "id": str(row[0]),
+                "artifact_id": row[1],
+                "source_mcp": row[2],
+                "db_table_pointer": row[3],
+                "row_count": row[4],
+                "time_range_start": row[5].isoformat() if row[5] else None,
+                "time_range_end": row[6].isoformat() if row[6] else None,
+                "description": row[7],
+                "status": row[8]
+            })
+            
+        return {"status": "success", "artifacts": artifacts}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/research/{research_id}/artifacts/{artifact_id}")
+async def get_artifact_data(research_id: str, artifact_id: str, db: AsyncSession = Depends(get_pg_session)):
+    """Fetch the raw data for an artifact via DuckDB."""
+    try:
+        try:
+            r_uuid = uuid.UUID(research_id)
+        except (ValueError, TypeError):
+            if research_id.startswith("res-"):
+                r_uuid = uuid.UUID("00000000-0000-0000-0000-000000000000")
+            else:
+                raise HTTPException(status_code=400, detail="Invalid research_id format")
+                
+        # Get the db_table_pointer from Postgres
+        stmt = text("""
+            SELECT db_table_pointer 
+            FROM semantic_catalog 
+            WHERE research_id = :research_id AND artifact_id = :artifact_id
+        """)
+        result = await db.execute(stmt, {"research_id": r_uuid, "artifact_id": artifact_id})
+        row = result.first()
+        
+        if not row:
+            raise HTTPException(status_code=404, detail="Artifact not found")
+            
+        db_table_pointer = row[0]
+        
+        if not db_table_pointer:
+            raise HTTPException(status_code=400, detail="Data not available in storage")
+            
+        # Run DuckDB query
+        def fetch_data():
+            conn = get_duckdb_conn()
+            posix_pointer = db_table_pointer.replace("\\", "/")
+            # Read from parquet
+            df = conn.execute(f"SELECT * FROM '{posix_pointer}' LIMIT 1000").df()
+            return df.to_json(orient="records", date_format="iso")
+            
+        json_data = await asyncio.to_thread(fetch_data)
+        parsed_data = json.loads(json_data)
+        
+        return {"status": "success", "artifact_id": artifact_id, "data": parsed_data}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 # ===== RESEARCH SSE ENDPOINTS =====
 
@@ -150,13 +237,24 @@ def detect_interrupt_type(state_values: dict) -> dict:
     next_agent = state_values.get("next_agent", None)
     messages = state_values.get("messages", [])
     
-    # Get the last AI message content
+    # Get the last AI message content, skipping internal supervisor reflections
     last_ai_content = ""
     last_ai_name = ""
     for msg in reversed(messages):
-        if getattr(msg, "type", None) == "ai":
-            last_ai_content = msg.content if isinstance(msg.content, str) else str(msg.content)
-            last_ai_name = getattr(msg, "name", "") or ""
+        msg_type = getattr(msg, "type", None)
+        msg_name = getattr(msg, "name", "")
+        
+        # Skip human messages
+        if msg_type == "human" or msg_name == "human":
+            continue
+            
+        if msg_type == "ai":
+            content = msg.content if isinstance(msg.content, str) else str(msg.content)
+            # Skip internal supervisor reflections — these are routing decisions, not user-facing messages
+            if content.startswith("[Supervisor reflection]"):
+                continue
+            last_ai_content = content
+            last_ai_name = msg_name or ""
             break
     
     if current_phase == "scoping_review":

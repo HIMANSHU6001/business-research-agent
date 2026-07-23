@@ -66,9 +66,9 @@ qualitative_tools = [
     tavily_gap_search
 ]
 
-from llm_utils import get_chat_groq, DEFAULT_MODEL
+from llm_utils import get_chat_model, DEFAULT_MODEL
 
-model = get_chat_groq(model=DEFAULT_MODEL, temperature=0.1)
+model = get_chat_model(model=DEFAULT_MODEL, temperature=0.1)
 
 async def run_qualitative_agent(state: ResearchState):
     """

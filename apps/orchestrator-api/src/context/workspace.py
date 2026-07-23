@@ -5,14 +5,14 @@ import datetime
 import asyncio
 import pandas as pd
 from sqlalchemy import text
-from llm_utils import get_chat_groq, DEFAULT_MODEL
+from llm_utils import get_chat_model, DEFAULT_MODEL
 from langchain_core.prompts import ChatPromptTemplate
 from database import get_duckdb_conn, AsyncSessionLocal
 
 async def generate_semantic_summary(artifact_id: str, sample_data_json: str, source_mcp: str) -> str:
     """Calls the Groq LLM to generate a 2-3 sentence semantic summary of the data."""
     try:
-        llm = get_chat_groq(
+        llm = get_chat_model(
             model=DEFAULT_MODEL,
             temperature=0.0,
             max_tokens=150,

@@ -20,6 +20,7 @@ dependencies = [
     "langchain>=0.1.0",
     "langchain-groq>=0.1.0",
     "langchain-core>=0.1.0",
+    "langchain-google-genai>=1.0.0",
     "langgraph-cli[inmem]>=0.1.55",
     "openai>=2.44.0",
     "cohere>=7.0.5",

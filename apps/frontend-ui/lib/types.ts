@@ -15,7 +15,7 @@ export type InterruptType = "clarification" | "brief_review" | "ask_human";
 
 export interface ChatMessage {
   id: string;
-  role: "user" | "assistant" | "system" | "progress";
+  role: "user" | "assistant" | "system" | "progress" | "thought";
   content: string;
   agentName?: string;
   timestamp: Date;
@@ -25,6 +25,18 @@ export interface ChatMessage {
     selectedFramework?: string;
     node?: string;
   };
+}
+
+export interface Artifact {
+  id: string;
+  artifact_id: string;
+  source_mcp: string;
+  db_table_pointer: string;
+  row_count: number;
+  time_range_start: string | null;
+  time_range_end: string | null;
+  description: string;
+  status: string;
 }
 
 // ===== SSE Events (from backend) =====
@@ -83,6 +95,7 @@ export interface ResearchState {
   researchBrief: string | null;
   selectedFramework: string | null;
   activeNode: string | null;
+  currentTask: string | null;
   finalReport: string | null;
   pendingInterrupt: SSEInterruptEvent | null;
 }

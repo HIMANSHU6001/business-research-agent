@@ -3,7 +3,7 @@ from datetime import datetime
 from typing_extensions import Literal
 from pydantic import BaseModel, Field
 
-from llm_utils import get_chat_groq, DEFAULT_MODEL
+from llm_utils import get_chat_model, DEFAULT_MODEL
 from langchain_core.messages import HumanMessage, AIMessage, get_buffer_string
 from langchain_core.output_parsers import PydanticOutputParser
 from langgraph.graph import END
@@ -14,7 +14,7 @@ from graph.state import ResearchState
 # ===== CONFIGURATION =====
 
 # Initialize model (You can swap this to qwen if you prefer, keeping Llama-3.1 as the established baseline)
-model = get_chat_groq(model=DEFAULT_MODEL, temperature=0.1)
+model = get_chat_model(model=DEFAULT_MODEL, temperature=0.1)
 
 def get_today_str() -> str:
     now = datetime.now()

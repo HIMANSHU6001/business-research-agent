@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils";
 interface ProgressTrackerProps {
   phase: ResearchPhase;
   activeNode: string | null;
+  currentTask?: string | null;
 }
 
 const PHASES = [
@@ -25,7 +26,7 @@ function getPhaseIndex(phase: ResearchPhase): number {
   return -1;
 }
 
-export function ProgressTracker({ phase, activeNode }: ProgressTrackerProps) {
+export function ProgressTracker({ phase, activeNode, currentTask }: ProgressTrackerProps) {
   const currentIndex = getPhaseIndex(phase);
 
   if (phase === "idle" || phase === "error") return null;
@@ -76,10 +77,19 @@ export function ProgressTracker({ phase, activeNode }: ProgressTrackerProps) {
                     {p.label}
                   </span>
                   
-                  <div className="h-3 overflow-hidden">
+                  <div className="h-4 sm:h-5 overflow-hidden">
                     {isCurrent && activeNode ? (
-                      <span className="text-[10px] text-muted-foreground truncate max-w-[120px] block animate-fade-in-up">
-                        {NODE_DISPLAY_NAMES[activeNode] || activeNode}
+                      <span className="text-[10px] text-muted-foreground truncate max-w-[140px] block animate-fade-in-up">
+                        {currentTask ? (
+                          <span className="flex items-center gap-1.5" title={currentTask as string}>
+                            <ActivitySquare className="w-2.5 h-2.5 opacity-70 animate-pulse" />
+                            {currentTask}
+                          </span>
+                        ) : (
+                          <span className="opacity-80">
+                            {NODE_DISPLAY_NAMES[activeNode] || activeNode}
+                          </span>
+                        )}
                       </span>
                     ) : (
                       <span className="text-[10px] text-transparent">_</span>

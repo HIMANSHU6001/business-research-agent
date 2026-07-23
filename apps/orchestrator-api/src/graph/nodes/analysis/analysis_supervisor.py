@@ -1,7 +1,7 @@
 import json
 from typing import TypedDict
 from langchain_core.messages import SystemMessage, HumanMessage
-from llm_utils import get_chat_groq, SUPERVISOR_MODEL, DEFAULT_MODEL
+from llm_utils import get_chat_model, SUPERVISOR_MODEL, DEFAULT_MODEL
 from graph.state import ResearchState
 import os
 
@@ -24,7 +24,7 @@ async def run_analysis_supervisor(state: ResearchState) -> dict:
     if reports is None:
         reports = []
     
-    agent_model = get_chat_groq(
+    agent_model = get_chat_model(
         model=SUPERVISOR_MODEL,
         temperature=0.1
     )
@@ -88,7 +88,7 @@ If BOTH quantitative and qualitative analyses have been adequately addressed (e.
     response = await supervisor_agent.ainvoke(inputs, config=config)
     agent_final_text = response["messages"][-1].content
 
-    base_model = get_chat_groq(
+    base_model = get_chat_model(
         model=SUPERVISOR_MODEL,
         temperature=0.0
     )
@@ -136,6 +136,11 @@ Supervisor Output:
         print("  [CAP ENFORCED] qualitative_agent called 2 times already. Forcing analysis_synthesizer.")
         decision["next_agent"] = "analysis_synthesizer"
         
+    valid_agents = ["quantitative_agent", "qualitative_agent", "analysis_synthesizer"]
+    if decision["next_agent"] not in valid_agents:
+        print(f"  [INVALID ROUTING] '{decision['next_agent']}' is not a valid agent. Forcing analysis_synthesizer.")
+        decision["next_agent"] = "analysis_synthesizer"
+        
     print(f"Supervisor Decision: {decision['next_agent']}")
     print(f"Task: {decision['agent_task']}")
     
@@ -155,7 +160,7 @@ async def run_analysis_synthesizer(state: ResearchState) -> dict:
     research_id = state.get("research_id", "")
     citations_list = await get_citations_for_research(research_id)
     
-    llm = get_chat_groq(
+    llm = get_chat_model(
         model=DEFAULT_MODEL,
         temperature=0.2
     )

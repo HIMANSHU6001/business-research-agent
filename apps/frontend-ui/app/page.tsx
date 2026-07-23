@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useResearch } from "@/hooks/use-research";
 import { ChatContainer } from "@/components/chat/chat-container";
+import { ResearchSidebar } from "@/components/sidebar/research-sidebar";
 import {
   Search,
   ArrowRight,
@@ -10,7 +11,7 @@ import {
   BarChart3,
   Globe,
   TrendingUp,
-  Zap,
+  Hexagon,
 } from "lucide-react";
 
 const EXAMPLE_QUERIES = [
@@ -41,20 +42,37 @@ const CAPABILITIES = [
 ];
 
 export default function Home() {
-  const { state, startResearch, respond, retry, reset } = useResearch();
+  const { state, startResearch, respond, retry, reset, loadResearch, pauseResearch, resumeResearch } = useResearch();
 
-  if (state.phase === "idle") {
-    return <LandingView onSubmit={startResearch} />;
-  }
+  const handleSelectSession = (threadId: string) => {
+    loadResearch(threadId);
+  };
+
+  const handleNewSession = () => {
+    reset();
+  };
 
   return (
-    <div className="h-screen flex flex-col">
-      <ChatContainer
-        state={state}
-        onRespond={respond}
-        onRetry={retry}
-        onNewResearch={reset}
+    <div className="h-screen flex overflow-hidden">
+      <ResearchSidebar
+        onSelectSession={handleSelectSession}
+        onNewSession={handleNewSession}
+        activeThreadId={state.threadId}
       />
+      <div className="flex-1 h-full overflow-hidden flex flex-col relative z-10">
+        {state.phase === "idle" ? (
+          <LandingView onSubmit={startResearch} />
+        ) : (
+          <ChatContainer
+            state={state}
+            onRespond={respond}
+            onRetry={retry}
+            onNewResearch={reset}
+            onPause={pauseResearch}
+            onResume={resumeResearch}
+          />
+        )}
+      </div>
     </div>
   );
 }
@@ -74,19 +92,19 @@ function LandingView({ onSubmit }: { onSubmit: (query: string) => void }) {
     <div className="min-h-screen flex flex-col relative overflow-hidden">
       {/* Background gradient orbs */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute top-[-20%] left-[-10%] w-[600px] h-[600px] rounded-full bg-[hsl(217,91%,60%,0.06)] blur-[120px] animate-float" />
-        <div className="absolute bottom-[-20%] right-[-10%] w-[500px] h-[500px] rounded-full bg-[hsl(250,80%,65%,0.05)] blur-[100px] animate-float" style={{ animationDelay: "1.5s" }} />
-        <div className="absolute top-[40%] right-[20%] w-[300px] h-[300px] rounded-full bg-[hsl(280,70%,55%,0.04)] blur-[80px] animate-float" style={{ animationDelay: "3s" }} />
+        <div className="absolute top-[-20%] left-[-10%] w-[600px] h-[600px] rounded-full bg-[hsl(262,83%,58%,0.06)] blur-[120px] animate-float" />
+        <div className="absolute bottom-[-20%] right-[-10%] w-[500px] h-[500px] rounded-full bg-[hsl(280,80%,65%,0.05)] blur-[100px] animate-float" style={{ animationDelay: "1.5s" }} />
+        <div className="absolute top-[40%] right-[20%] w-[300px] h-[300px] rounded-full bg-[hsl(190,90%,60%,0.04)] blur-[80px] animate-float" style={{ animationDelay: "3s" }} />
       </div>
 
       {/* Header */}
       <header className="relative z-10 px-6 py-5 flex items-center justify-between">
         <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-[hsl(217,91%,60%)] to-[hsl(250,80%,65%)] flex items-center justify-center">
-            <Zap className="w-4 h-4 text-white" />
+          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-[hsl(262,83%,58%)] to-[hsl(280,80%,65%)] flex items-center justify-center">
+            <Hexagon className="w-4 h-4 text-white" />
           </div>
           <span className="text-sm font-semibold text-foreground tracking-tight">
-            BRA
+            Atlas
           </span>
         </div>
       </header>
@@ -139,7 +157,7 @@ function LandingView({ onSubmit }: { onSubmit: (query: string) => void }) {
                 <button
                   onClick={handleSubmit}
                   disabled={!query.trim()}
-                  className="flex-shrink-0 m-2.5 w-10 h-10 rounded-xl bg-gradient-to-br from-[hsl(217,91%,60%)] to-[hsl(250,80%,65%)] text-white flex items-center justify-center hover:opacity-90 disabled:opacity-30 disabled:cursor-not-allowed transition-all duration-200 hover:shadow-[0_4px_16px_hsl(217,91%,60%,0.3)]"
+                  className="flex-shrink-0 m-2.5 w-10 h-10 rounded-xl bg-gradient-to-br from-[hsl(262,83%,58%)] to-[hsl(280,80%,65%)] text-white flex items-center justify-center hover:opacity-90 disabled:opacity-30 disabled:cursor-not-allowed transition-all duration-200 hover:shadow-[0_4px_16px_hsl(262,83%,58%,0.3)]"
                 >
                   <ArrowRight className="w-4 h-4" />
                 </button>
@@ -160,7 +178,7 @@ function LandingView({ onSubmit }: { onSubmit: (query: string) => void }) {
                     setQuery(eq.query);
                     onSubmit(eq.query);
                   }}
-                  className="group w-full text-left glass rounded-xl px-4 py-3 transition-all duration-200 hover:bg-[hsl(var(--card)/0.9)] hover:border-[hsl(var(--primary)/0.3)] hover:shadow-[0_2px_12px_hsl(217,91%,60%,0.08)]"
+                  className="group w-full text-left glass rounded-xl px-4 py-3 transition-all duration-200 hover:bg-[hsl(var(--card)/0.9)] hover:border-[hsl(var(--primary)/0.3)] hover:shadow-[0_2px_12px_hsl(262,83%,58%,0.08)]"
                 >
                   <div className="flex items-start gap-3">
                     <div className="flex-shrink-0 w-7 h-7 rounded-lg bg-[hsl(var(--secondary))] flex items-center justify-center mt-0.5 group-hover:bg-[hsl(var(--primary)/0.15)] transition-colors">

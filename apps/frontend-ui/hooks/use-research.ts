@@ -12,8 +12,12 @@ import { NODE_DISPLAY_NAMES } from "@/lib/types";
 import {
   startResearch as apiStartResearch,
   respondToInterrupt as apiRespondToInterrupt,
+  resumeResearch as apiResumeResearch,
+  pauseResearchApi,
+  getResearchState,
   type SSEEvent,
 } from "@/lib/api-client";
+import { useResearchHistory } from "./use-research-history";
 
 // ===== Reducer Actions =====
 
@@ -23,12 +27,13 @@ type Action =
   | { type: "NODE_UPDATE"; node: string; data: SSENodeUpdateEvent["data"] }
   | { type: "INTERRUPT"; interrupt: SSEInterruptEvent }
   | {
-      type: "COMPLETE";
-      finalReport: string;
-    }
+    type: "COMPLETE";
+    finalReport: string;
+  }
   | { type: "ERROR"; message: string; traceback?: string }
   | { type: "STREAMING_START" }
   | { type: "STREAMING_END" }
+  | { type: "HYDRATE"; state: Partial<ResearchState> }
   | { type: "RESET" };
 
 // ===== Initial State =====
@@ -44,6 +49,7 @@ const initialState: ResearchState = {
   researchBrief: null,
   selectedFramework: null,
   activeNode: null,
+  currentTask: null,
   finalReport: null,
   pendingInterrupt: null,
 };
@@ -119,18 +125,34 @@ function researchReducer(
       if (nodeData.messages) {
         for (const msg of nodeData.messages) {
           if (msg.type === "ai" && msg.content) {
-            // Skip supervisor reflection messages (internal reasoning)
-            if (msg.content.startsWith("[Supervisor reflection]")) {
-              continue;
+            // Normalize content to string to avoid TypeError
+            const contentStr = typeof msg.content === "string"
+              ? msg.content
+              : Array.isArray(msg.content)
+                ? msg.content.map((c: any) => c.text || JSON.stringify(c)).join("\n")
+                : JSON.stringify(msg.content);
+
+            // Check for supervisor reflection messages
+            if (contentStr.startsWith("[Supervisor reflection]")) {
+              const thoughtContent = contentStr.replace("[Supervisor reflection]", "").trim();
+              newMessages.push({
+                id: createMessageId(),
+                role: "thought",
+                content: thoughtContent,
+                agentName: msg.name || action.node,
+                timestamp: new Date(),
+                metadata: { node: action.node },
+              });
+            } else {
+              newMessages.push({
+                id: createMessageId(),
+                role: "assistant",
+                content: contentStr,
+                agentName: msg.name || action.node,
+                timestamp: new Date(),
+                metadata: { node: action.node },
+              });
             }
-            newMessages.push({
-              id: createMessageId(),
-              role: "assistant",
-              content: msg.content,
-              agentName: msg.name || action.node,
-              timestamp: new Date(),
-              metadata: { node: action.node },
-            });
           }
         }
       }
@@ -166,6 +188,7 @@ function researchReducer(
         ...state,
         messages: [...state.messages, ...newMessages],
         activeNode: action.node,
+        currentTask: nodeData.agent_task || nodeData.next_agent || state.currentTask,
         phase: newPhase,
         researchBrief: nodeData.research_brief || state.researchBrief,
         selectedFramework:
@@ -191,6 +214,7 @@ function researchReducer(
         isStreaming: false,
         finalReport: action.finalReport,
         activeNode: null,
+        currentTask: null,
         pendingInterrupt: null,
       };
 
@@ -202,6 +226,7 @@ function researchReducer(
         error: action.message,
         errorTraceback: action.traceback || null,
         activeNode: null,
+        currentTask: null,
       };
 
     case "STREAMING_START":
@@ -218,6 +243,12 @@ function researchReducer(
         isStreaming: false,
       };
 
+    case "HYDRATE":
+      return {
+        ...state,
+        ...action.state,
+      };
+
     case "RESET":
       return { ...initialState };
 
@@ -228,14 +259,37 @@ function researchReducer(
 
 // ===== Hook =====
 
+import { useEffect } from "react";
+
 export function useResearch() {
   const [state, dispatch] = useReducer(researchReducer, initialState);
   const abortControllerRef = useRef<AbortController | null>(null);
+
+  const addSession = useResearchHistory((s) => s.addSession);
+  const updateSessionStatus = useResearchHistory((s) => s.updateSessionStatus);
+  const currentQueryRef = useRef<string>("");
+
+  useEffect(() => {
+    if (state.threadId) {
+      if (state.phase === "complete") {
+        updateSessionStatus(state.threadId, "completed");
+      } else if (state.phase === "error") {
+        updateSessionStatus(state.threadId, "error");
+      }
+    }
+  }, [state.threadId, state.phase, updateSessionStatus]);
 
   const handleEvent = useCallback(
     (event: SSEEvent) => {
       switch (event.event) {
         case "init":
+          addSession({
+            threadId: event.data.thread_id,
+            researchId: event.data.research_id,
+            query: currentQueryRef.current,
+            status: "working",
+            updatedAt: Date.now(),
+          });
           dispatch({
             type: "SET_THREAD",
             threadId: event.data.thread_id,
@@ -280,6 +334,8 @@ export function useResearch() {
       if (abortControllerRef.current) {
         abortControllerRef.current.abort();
       }
+
+      currentQueryRef.current = query;
 
       dispatch({ type: "RESET" });
       dispatch({ type: "ADD_USER_MESSAGE", content: query });
@@ -390,5 +446,121 @@ export function useResearch() {
     dispatch({ type: "RESET" });
   }, []);
 
-  return { state, startResearch, respond, retry, reset };
+  const loadResearch = useCallback(async (threadId: string) => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+
+    // Instead of RESET, immediately put into a loading state within ChatContainer
+    dispatch({
+      type: "HYDRATE",
+      state: {
+        threadId,
+        phase: "scoping",
+        messages: [],
+        isStreaming: true,
+        error: null,
+        finalReport: null,
+        activeNode: null,
+        currentTask: null,
+        pendingInterrupt: null
+      }
+    });
+
+    try {
+      const backendState = await getResearchState(threadId);
+
+      if ("error" in backendState) {
+        dispatch({ type: "ERROR", message: backendState.error as string, traceback: backendState.traceback });
+        return;
+      }
+
+      let mappedMessages: ChatMessage[] = backendState.messages.map((m: any, i: number) => {
+        const isThought = typeof m.content === "string" && m.content.startsWith("[Supervisor reflection]");
+        const content = isThought ? m.content.replace("[Supervisor reflection]", "").trim() : m.content;
+
+        return {
+          id: `hydrated-${i}`,
+          role: m.type === "human" ? "user" : (isThought ? "thought" : "assistant"),
+          content: content,
+          agentName: m.name || undefined,
+          timestamp: new Date(),
+        };
+      });
+
+      // If no messages were returned (e.g. graph failed early), try to reconstruct the user message
+      if (mappedMessages.length === 0) {
+        const historySession = useResearchHistory.getState().sessions.find(s => s.threadId === threadId);
+        if (historySession) {
+          mappedMessages.push({
+            id: `hydrated-fallback`,
+            role: "user",
+            content: historySession.query,
+            timestamp: new Date(),
+          });
+        }
+      }
+
+      let phase = (backendState.current_phase as ResearchPhase) || "scoping";
+      if (backendState.is_interrupted) {
+        phase = backendState.interrupt_info?.type === "brief_review" ? "scoping_review" : phase;
+      }
+
+      dispatch({
+        type: "HYDRATE",
+        state: {
+          threadId: backendState.thread_id,
+          researchId: backendState.research_id,
+          phase: phase,
+          messages: mappedMessages,
+          activeNode: null,
+          currentTask: null,
+          researchBrief: backendState.research_brief,
+          selectedFramework: backendState.selected_framework,
+          pendingInterrupt: backendState.interrupt_info,
+          finalReport: backendState.analysis_reports?.[backendState.analysis_reports.length - 1] || null,
+        }
+      });
+    } catch (err) {
+      dispatch({ type: "ERROR", message: (err as Error).message });
+    } finally {
+      dispatch({ type: "STREAMING_END" });
+    }
+  }, []);
+
+  const pauseResearch = useCallback(() => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+    if (state.threadId) {
+      pauseResearchApi(state.threadId).catch(console.error);
+    }
+    dispatch({ type: "STREAMING_END" });
+  }, [state.threadId]);
+
+  const resumeResearch = useCallback(async () => {
+    if (!state.threadId) return;
+
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+
+    dispatch({ type: "STREAMING_START" });
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
+    try {
+      await apiResumeResearch(state.threadId, handleEvent, controller.signal);
+    } catch (err) {
+      if ((err as Error).name !== "AbortError") {
+        dispatch({ type: "ERROR", message: (err as Error).message });
+      }
+    } finally {
+      dispatch({ type: "STREAMING_END" });
+      abortControllerRef.current = null;
+    }
+  }, [state.threadId, handleEvent]);
+
+  return { state, startResearch, respond, retry, reset, loadResearch, pauseResearch, resumeResearch };
 }

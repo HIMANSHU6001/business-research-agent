@@ -3,7 +3,7 @@ from pydantic import BaseModel, Field
 from langgraph.types import Command
 from langgraph.graph import END
 from graph.state import ResearchState
-from llm_utils import get_chat_groq, SUPERVISOR_MODEL
+from llm_utils import get_chat_model, SUPERVISOR_MODEL
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.messages import AIMessage, SystemMessage, HumanMessage
 from langchain_core.output_parsers import PydanticOutputParser
@@ -27,7 +27,7 @@ class SupervisorDecision(BaseModel):
     )
 
 
-llm = get_chat_groq(model=SUPERVISOR_MODEL, temperature=0.1)
+llm = get_chat_model(model=SUPERVISOR_MODEL, temperature=0.1)
 supervisor_parser = PydanticOutputParser(pydantic_object=SupervisorDecision)
 
 
@@ -150,8 +150,18 @@ async def run_collection_synthesizer(state: ResearchState) -> dict:
     ])
     
     # Filter state["messages"] for reports
+    def _extract_text(content):
+        if isinstance(content, str):
+            return content
+        elif isinstance(content, list):
+            return "\n".join(
+                c.get("text", "") if isinstance(c, dict) else str(c)
+                for c in content
+            )
+        return str(content)
+        
     reports = [
-        m.content for m in state.get("messages", []) 
+        _extract_text(m.content) for m in state.get("messages", []) 
         if getattr(m, "name", None) in ["financial_agent", "macro_agent", "trends_agent"]
     ]
     
